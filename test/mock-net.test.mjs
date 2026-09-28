@@ -3,7 +3,14 @@ import { afterEach, beforeEach, test } from "node:test";
 
 import { createGRush } from "../src/sdk.js";
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 5));
+// The mock relays each hop on its own setTimeout(0). A fixed-delay wait loses to a hop
+// that was scheduled late on a busy runner, so drain timer turns instead: each turn is
+// queued after the hops already pending and runs strictly after them.
+const flush = async () => {
+  for (let turn = 0; turn < 10; turn += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+};
 
 let sdk;
 
