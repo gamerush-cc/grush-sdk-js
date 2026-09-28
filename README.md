@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.1.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.2.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -82,6 +82,7 @@ if (await GRush.share.isAvailable()) {
 
 - ゲームの呼び出しで共有が開くのではなく、GameRush の確認シートが出て、プレイヤーが送り先を押したときに開く。ゲームに返るのは `opened` / `cancelled` だけ
 - `image` は `"screen"`（ゲームの canvas のスクショ）/ `Blob` / `ArrayBuffer` / 型付き配列 / data URL / `HTMLCanvasElement` / `{ base64, mimeType }`。4MB まで。**DOM で描いた文字は `"screen"` に写らない**
+- 共有は 5 秒に 1 回まで。1 回のボタン操作で呼ぶのは 1 回にする。共有したことを条件に報酬を出さない
 - 本文は 100 文字まで。URL と @メンションを含むと `invalidParams`。添付される URL は GameRush がゲームのページから作り、ゲームからは指定できない
 - 古い GameRush（`protocolVersion` 3 未満）では `unsupported`
 

@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.1.0 */
+/*! GameRush SDK for JavaScript v0.2.0 */
 
 // src/mock-leaderboards.js
 function clamp(value, fallback, max) {
@@ -984,7 +984,7 @@ function createRoom(source, info, onClosed) {
 }
 
 // src/sdk.js
-var VERSION = "0.1.0";
+var VERSION = "0.2.0";
 var REQUIRED_PROTOCOL_VERSION = 1;
 var PLAYER_STATE_PROTOCOL_VERSION = 2;
 var SHARE_PROTOCOL_VERSION = 3;
