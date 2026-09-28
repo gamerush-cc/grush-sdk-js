@@ -41,6 +41,15 @@ afterEach(() => {
   delete globalThis.location;
 });
 
+test("share rejects a bare string instead of options without calling the runtime", async () => {
+  installRuntime(recordingShare());
+  const before = calls.length;
+  const result = await sdk.share.share("clear");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "invalidParams");
+  assert.equal(calls.length, before);
+});
+
 test("share passes the options through to the runtime unchanged", async () => {
   installRuntime(recordingShare());
   const image = new Uint8Array([1, 2, 3]);

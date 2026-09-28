@@ -1080,6 +1080,11 @@ function createGRush(options = {}) {
   };
   const share = {
     share(rawOptions) {
+      if (rawOptions !== void 0 && rawOptions !== null && typeof rawOptions !== "object") {
+        return Promise.resolve(
+          failure(CODES.invalidParams, "Share options must be an object like { text, image }.")
+        );
+      }
       const opts = rawOptions ?? {};
       const params = {};
       if (opts.text !== void 0) params.text = opts.text;
