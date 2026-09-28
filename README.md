@@ -1,6 +1,6 @@
 # GameRush SDK for JavaScript
 
-GameRush の GameAPI（ランキング・公開プレイヤー状態・クラウドセーブ・リアルタイム対戦）を、素の `index.html` のゲームから呼ぶためのラッパー。バンドラ不要で、script タグ 1 行でも ES Modules の `import` でも使える。使い方の正（投稿が弾かれる条件とエラーコード・API トークン）は [SDK ガイド](https://gamerush.jp/sdk)。
+GameRush の GameAPI（ランキング・公開プレイヤー状態・クラウドセーブ・共有・リアルタイム対戦）を、素の `index.html` のゲームから呼ぶためのラッパー。バンドラ不要で、script タグ 1 行でも ES Modules の `import` でも使える。使い方の正（投稿が弾かれる条件とエラーコード・API トークン）は [SDK ガイド](https://gamerush.jp/sdk)。
 
 GameRush はアップロードされた全ビルドへランタイム JS（`window.GRushPlayer` など）を注入している。この SDK はその上に薄く乗り、次の 3 つを足す。
 
@@ -63,11 +63,27 @@ TypeScript の型は `grush-sdk.d.ts`。
 | `GRush.leaderboards.top(key, { limit, offset })` / `aroundMe(key, { range })` / `friends(key, { limit })` | `{ key, title, entries, total, verified, ... }` |
 | `GRush.playerState.getMine()` / `setMine(payload, baseRevision)` / `get(pseudoIds)` / `report(pseudoId)` | `{ pseudoId, payload, revision, updatedAt }` など |
 | `GRush.cloudSave.load(slot)` / `save(payload, slot, { baseRevision })` / `remove(slot)` | `{ slot, payload, revision, createdAt, updatedAt }` など |
+| `GRush.share.share({ text, image })` | `{ status: "opened" \| "cancelled" }`（下記） |
+| `GRush.share.isAvailable()` | `true` / `false`（結果オブジェクトではなく真偽値。失敗しない） |
 | `GRush.net.join({ mode, roomCode })` | 部屋（下記） |
 
 失敗時の `code` は `unsupported` / `unavailable` / `timeout` / `rateLimited`（`retryAfterMs` 付き）/ `signInRequired` / `consentDeclined` / `invalidParams` / `conflict`（クラウドセーブの版ずれ）/ `internal`。
 
 集約が `sum` のランキングへ投稿を再送するときは、必ず同じ `operationId` を渡すこと。渡さないと二重に加算される。
+
+### 共有
+
+```js
+if (await GRush.share.isAvailable()) {
+  const shared = await GRush.share.share({ text: "ステージ3をクリア", image: "screen" });
+  if (shared.ok) console.log(shared.value.status);
+}
+```
+
+- ゲームの呼び出しで共有が開くのではなく、GameRush の確認シートが出て、プレイヤーが送り先を押したときに開く。ゲームに返るのは `opened` / `cancelled` だけ
+- `image` は `"screen"`（ゲームの canvas のスクショ）/ `Blob` / `ArrayBuffer` / 型付き配列 / data URL / `HTMLCanvasElement` / `{ base64, mimeType }`。4MB まで。**DOM で描いた文字は `"screen"` に写らない**
+- 本文は 100 文字まで。URL と @メンションを含むと `invalidParams`。添付される URL は GameRush がゲームのページから作り、ゲームからは指定できない
+- 古い GameRush（`protocolVersion` 3 未満）では `unsupported`
 
 ### 対戦
 
@@ -102,13 +118,14 @@ if (GRush.backend === "mock") {
   GRush.mock.config.signedIn = true;
   GRush.mock.config.grantProfileConsent = false;
   GRush.mock.config.unreliableDropRate = 0.1;
+  GRush.mock.config.shareStatus = "cancelled";
 
   const bot = GRush.mock.addPeer("Sparring Partner");
   bot.on("message", (message) => bot.send(message.payload));
 }
 ```
 
-モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。
+モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
 
 **`unreliableDropRate` は既定 0 だが、出荷前に必ず 0 より大きくして試すこと。** パケットが落ちる前提で書けているかを確かめられる場所はここだけになる。
 

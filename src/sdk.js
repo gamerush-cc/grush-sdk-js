@@ -7,6 +7,7 @@ import {
   leaderboardPageOf,
   playerOf,
   playerStateOf,
+  shareResultOf,
   submitResultOf,
 } from "./normalize.js";
 import { CODES, failure, ok, unsupported } from "./result.js";
@@ -15,6 +16,7 @@ import { createRoom } from "./room.js";
 export const VERSION = "0.1.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
+const SHARE_PROTOCOL_VERSION = 3;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -123,6 +125,20 @@ export function createGRush(options = {}) {
     remove: (slot) => mapped("cloudSave.remove", { slot }, () => true, 0),
   };
 
+  const share = {
+    share(rawOptions) {
+      const opts = rawOptions ?? {};
+      const params = {};
+      if (opts.text !== undefined) params.text = opts.text;
+      if (opts.image !== undefined) params.image = opts.image;
+      return mapped("share.open", params, required(shareResultOf), SHARE_PROTOCOL_VERSION);
+    },
+    async isAvailable() {
+      const result = await call("share.getAvailability", undefined, SHARE_PROTOCOL_VERSION);
+      return result.ok && result.value === true;
+    },
+  };
+
   const net = {
     async join(rawOptions) {
       const opts = rawOptions ?? {};
@@ -176,6 +192,7 @@ export function createGRush(options = {}) {
     leaderboards,
     playerState,
     cloudSave,
+    share,
     net,
     mock: mockBackend.controls,
   };

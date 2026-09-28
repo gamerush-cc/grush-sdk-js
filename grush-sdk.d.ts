@@ -90,6 +90,19 @@ export type GRushCloudSave = {
   updatedAt: string;
 };
 
+export type GRushShareImage =
+  | Blob
+  | ArrayBuffer
+  | ArrayBufferView
+  | HTMLCanvasElement
+  | string
+  | { base64: string; mimeType: string }
+  | "screen";
+
+export type GRushShareOptions = { text?: string; image?: GRushShareImage };
+export type GRushShareStatus = "opened" | "cancelled";
+export type GRushShareResult = { status: GRushShareStatus };
+
 export type GRushPeer = {
   index: number;
   pseudoId: string;
@@ -149,6 +162,8 @@ export type GRushMockConfig = {
   confirmPlayerStateReport: boolean;
   unreliableDropRate: number;
   maxPeers: number;
+  shareAvailable: boolean;
+  shareStatus: GRushShareStatus;
 };
 
 export interface GRushMockPeer {
@@ -225,6 +240,10 @@ export interface GRushSdk {
       options?: { baseRevision?: number },
     ): Promise<GRushResult<GRushCloudSave>>;
     remove(slot?: string): Promise<GRushResult<true>>;
+  };
+  share: {
+    share(options?: GRushShareOptions): Promise<GRushResult<GRushShareResult>>;
+    isAvailable(): Promise<boolean>;
   };
   net: {
     join(options?: { mode?: string; roomCode?: string }): Promise<GRushResult<GRushRoom>>;

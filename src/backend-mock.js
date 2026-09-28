@@ -27,6 +27,8 @@ export function defaultMockConfig() {
     confirmPlayerStateReport: true,
     unreliableDropRate: 0,
     maxPeers: 8,
+    shareAvailable: true,
+    shareStatus: "opened",
   };
 }
 
@@ -208,6 +210,11 @@ export function createMockBackend(config) {
     "cloudSave.load": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.get(p.slot || "default") ?? null),
     "cloudSave.save": saveCloud,
     "cloudSave.remove": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.delete(p.slot || "default")),
+    "share.open": () => {
+      if (!config.shareAvailable) return failure(CODES.unavailable, "Sharing is unavailable here.");
+      return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
+    },
+    "share.getAvailability": () => ok(config.shareAvailable === true),
     "net.join": (p) => {
       const joined = net.join(p);
       if (joined === null) return failure(CODES.internal, "Failed to join a room.");
@@ -246,7 +253,7 @@ export function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 2,
+    protocolVersion: () => 3,
     async call(method, params = {}) {
       const handler = handlers[method];
       if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);

@@ -19,6 +19,7 @@ test("the classic script exposes GRush and GRushSdk without module syntax", () =
   assert.equal(context.GRush, context.GRushSdk);
   assert.equal(context.GRush.VERSION, pkg.version);
   assert.equal(typeof context.GRush.leaderboards.submit, "function");
+  assert.equal(typeof context.GRush.share.share, "function");
 });
 
 test("the classic script never overwrites an existing GRush global", () => {

@@ -106,3 +106,8 @@ export function cloudSaveOf(raw) {
     updatedAt: text(raw.updatedAt),
   };
 }
+
+export function shareResultOf(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  return { status: raw.status === "opened" ? "opened" : "cancelled" };
+}

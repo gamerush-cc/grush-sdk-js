@@ -44,6 +44,8 @@ const INVOKERS = {
   "playerState.setMine": (apis, p) => apis.PlayerState?.setMine(p.payload, p.baseRevision),
   "playerState.get": (apis, p) => apis.PlayerState?.get(p.pseudoIds),
   "playerState.report": (apis, p) => apis.PlayerState?.report(p.pseudoId),
+  "share.open": (apis, p) => apis.Share?.share(p),
+  "share.getAvailability": (apis) => apis.Share?.isAvailable(),
   "net.join": (apis, p) =>
     apis.Net?.join(p).then((room) =>
       room ? { source: roomSourceOf(room), info: describeRoom(room) } : null,
@@ -65,6 +67,7 @@ function currentApis() {
     Leaderboards: runtimeApi("Leaderboards"),
     PlayerState: runtimeApi("PlayerState"),
     Net: runtimeApi("Net"),
+    Share: runtimeApi("Share"),
   };
 }
 

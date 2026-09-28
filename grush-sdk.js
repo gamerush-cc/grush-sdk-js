@@ -413,7 +413,9 @@
       grantProfileConsent: true,
       confirmPlayerStateReport: true,
       unreliableDropRate: 0,
-      maxPeers: 8
+      maxPeers: 8,
+      shareAvailable: true,
+      shareStatus: "opened"
     };
   }
   var memoryStore = null;
@@ -572,6 +574,11 @@
       "cloudSave.load": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.get(p.slot || "default") ?? null),
       "cloudSave.save": saveCloud,
       "cloudSave.remove": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.delete(p.slot || "default")),
+      "share.open": () => {
+        if (!config.shareAvailable) return failure(CODES.unavailable, "Sharing is unavailable here.");
+        return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
+      },
+      "share.getAvailability": () => ok(config.shareAvailable === true),
       "net.join": (p) => {
         const joined = net.join(p);
         if (joined === null) return failure(CODES.internal, "Failed to join a room.");
@@ -607,7 +614,7 @@
       kind: "mock",
       controls,
       isAvailable: () => true,
-      protocolVersion: () => 2,
+      protocolVersion: () => 3,
       async call(method, params = {}) {
         const handler = handlers[method];
         if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);
@@ -661,6 +668,8 @@
     "playerState.setMine": (apis, p) => apis.PlayerState?.setMine(p.payload, p.baseRevision),
     "playerState.get": (apis, p) => apis.PlayerState?.get(p.pseudoIds),
     "playerState.report": (apis, p) => apis.PlayerState?.report(p.pseudoId),
+    "share.open": (apis, p) => apis.Share?.share(p),
+    "share.getAvailability": (apis) => apis.Share?.isAvailable(),
     "net.join": (apis, p) => apis.Net?.join(p).then(
       (room) => room ? { source: roomSourceOf(room), info: describeRoom(room) } : null
     )
@@ -678,7 +687,8 @@
       Player: runtimeApi("Player"),
       Leaderboards: runtimeApi("Leaderboards"),
       PlayerState: runtimeApi("PlayerState"),
-      Net: runtimeApi("Net")
+      Net: runtimeApi("Net"),
+      Share: runtimeApi("Share")
     };
   }
   async function callCloudSave(method, params) {
@@ -810,6 +820,10 @@
       createdAt: text(raw.createdAt),
       updatedAt: text(raw.updatedAt)
     };
+  }
+  function shareResultOf(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return { status: raw.status === "opened" ? "opened" : "cancelled" };
   }
 
   // src/room.js
@@ -974,6 +988,7 @@
   var VERSION = "0.1.0";
   var REQUIRED_PROTOCOL_VERSION = 1;
   var PLAYER_STATE_PROTOCOL_VERSION = 2;
+  var SHARE_PROTOCOL_VERSION = 3;
   var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
   var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
   var noneBackend = {
@@ -1064,6 +1079,19 @@
       },
       remove: (slot) => mapped("cloudSave.remove", { slot }, () => true, 0)
     };
+    const share = {
+      share(rawOptions) {
+        const opts = rawOptions ?? {};
+        const params = {};
+        if (opts.text !== void 0) params.text = opts.text;
+        if (opts.image !== void 0) params.image = opts.image;
+        return mapped("share.open", params, required(shareResultOf), SHARE_PROTOCOL_VERSION);
+      },
+      async isAvailable() {
+        const result = await call("share.getAvailability", void 0, SHARE_PROTOCOL_VERSION);
+        return result.ok && result.value === true;
+      }
+    };
     const net = {
       async join(rawOptions) {
         const opts = rawOptions ?? {};
@@ -1116,6 +1144,7 @@
       leaderboards,
       playerState,
       cloudSave,
+      share,
       net,
       mock: mockBackend.controls
     };
