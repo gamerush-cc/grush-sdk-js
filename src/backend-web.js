@@ -46,6 +46,7 @@ const INVOKERS = {
   "playerState.report": (apis, p) => apis.PlayerState?.report(p.pseudoId),
   "share.open": (apis, p) => apis.Share?.share(p),
   "share.getAvailability": (apis) => apis.Share?.isAvailable(),
+  "locale.get": (apis) => apis.Locale?.get(),
   "net.join": (apis, p) =>
     apis.Net?.join(p).then((room) =>
       room ? { source: roomSourceOf(room), info: describeRoom(room) } : null,
@@ -68,6 +69,7 @@ function currentApis() {
     PlayerState: runtimeApi("PlayerState"),
     Net: runtimeApi("Net"),
     Share: runtimeApi("Share"),
+    Locale: runtimeApi("Locale"),
   };
 }
 
@@ -88,6 +90,11 @@ export function createWebBackend() {
     protocolVersion() {
       const version = runtimeApi("Info")?.protocolVersion;
       return typeof version === "number" ? version : 0;
+    },
+    localeCurrent: () => runtimeApi("Locale")?.current?.() ?? null,
+    localeOnChange(handler) {
+      const unsubscribe = runtimeApi("Locale")?.onChange?.(handler);
+      return typeof unsubscribe === "function" ? unsubscribe : () => {};
     },
     async call(method, params = {}) {
       if (method in CLOUD_SAVE_INVOKERS) return callCloudSave(method, params);

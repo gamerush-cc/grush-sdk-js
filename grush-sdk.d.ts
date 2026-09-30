@@ -103,6 +103,13 @@ export type GRushShareOptions = { text?: string; image?: GRushShareImage };
 export type GRushShareStatus = "opened" | "cancelled";
 export type GRushShareResult = { status: GRushShareStatus };
 
+export type GRushLocaleSource = "user" | "system" | "device";
+export type GRushLocale = {
+  locale: string;
+  source: GRushLocaleSource;
+  languages: string[];
+};
+
 export type GRushPeer = {
   index: number;
   pseudoId: string;
@@ -164,6 +171,7 @@ export type GRushMockConfig = {
   maxPeers: number;
   shareAvailable: boolean;
   shareStatus: GRushShareStatus;
+  locale: string | null;
 };
 
 export interface GRushMockPeer {
@@ -244,6 +252,11 @@ export interface GRushSdk {
   share: {
     share(options?: GRushShareOptions): Promise<GRushResult<GRushShareResult>>;
     isAvailable(): Promise<boolean>;
+  };
+  locale: {
+    get(): Promise<GRushResult<GRushLocale>>;
+    current(): GRushLocale | null;
+    onChange(handler: (locale: GRushLocale) => void): () => void;
   };
   net: {
     join(options?: { mode?: string; roomCode?: string }): Promise<GRushResult<GRushRoom>>;

@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.2.0 */
+/*! GameRush SDK for JavaScript v0.3.0 */
 "use strict";
 (() => {
   // src/mock-leaderboards.js
@@ -396,6 +396,7 @@
   var PLAYER_STATE_MAX_BYTES = 4 * 1024;
   var CLOUD_SAVE_MAX_BYTES = 256 * 1024;
   var OPAQUE_STRING_MIN_LENGTH = 256;
+  var LOCALE_FALLBACK = "ja";
   var BASE64_LIKE = /^[A-Za-z0-9+/\-_]+={0,2}$/;
   function containsOpaqueString(value) {
     if (typeof value === "string") {
@@ -404,6 +405,24 @@
     if (Array.isArray(value)) return value.some(containsOpaqueString);
     if (value && typeof value === "object") return Object.values(value).some(containsOpaqueString);
     return false;
+  }
+  function deviceLanguages() {
+    const list = globalThis.navigator?.languages;
+    const single = globalThis.navigator?.language;
+    const tags = Array.isArray(list) ? list : [single];
+    return tags.filter((tag) => typeof tag === "string" && tag);
+  }
+  function mockLocale(config) {
+    const device = deviceLanguages();
+    if (typeof config.locale === "string" && config.locale) {
+      const languages = [config.locale, ...device.filter((tag) => tag !== config.locale)];
+      return { locale: config.locale, source: "user", languages };
+    }
+    return {
+      locale: device[0] ?? LOCALE_FALLBACK,
+      source: "device",
+      languages: device.length ? device : [LOCALE_FALLBACK]
+    };
   }
   function defaultMockConfig() {
     return {
@@ -415,7 +434,8 @@
       unreliableDropRate: 0,
       maxPeers: 8,
       shareAvailable: true,
-      shareStatus: "opened"
+      shareStatus: "opened",
+      locale: null
     };
   }
   var memoryStore = null;
@@ -579,6 +599,7 @@
         return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
       },
       "share.getAvailability": () => ok(config.shareAvailable === true),
+      "locale.get": () => ok(mockLocale(config)),
       "net.join": (p) => {
         const joined = net.join(p);
         if (joined === null) return failure(CODES.internal, "Failed to join a room.");
@@ -614,7 +635,10 @@
       kind: "mock",
       controls,
       isAvailable: () => true,
-      protocolVersion: () => 3,
+      protocolVersion: () => 4,
+      localeCurrent: () => mockLocale(config),
+      localeOnChange: () => () => {
+      },
       async call(method, params = {}) {
         const handler = handlers[method];
         if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);
@@ -670,6 +694,7 @@
     "playerState.report": (apis, p) => apis.PlayerState?.report(p.pseudoId),
     "share.open": (apis, p) => apis.Share?.share(p),
     "share.getAvailability": (apis) => apis.Share?.isAvailable(),
+    "locale.get": (apis) => apis.Locale?.get(),
     "net.join": (apis, p) => apis.Net?.join(p).then(
       (room) => room ? { source: roomSourceOf(room), info: describeRoom(room) } : null
     )
@@ -688,7 +713,8 @@
       Leaderboards: runtimeApi("Leaderboards"),
       PlayerState: runtimeApi("PlayerState"),
       Net: runtimeApi("Net"),
-      Share: runtimeApi("Share")
+      Share: runtimeApi("Share"),
+      Locale: runtimeApi("Locale")
     };
   }
   async function callCloudSave(method, params) {
@@ -707,6 +733,12 @@
       protocolVersion() {
         const version = runtimeApi("Info")?.protocolVersion;
         return typeof version === "number" ? version : 0;
+      },
+      localeCurrent: () => runtimeApi("Locale")?.current?.() ?? null,
+      localeOnChange(handler) {
+        const unsubscribe = runtimeApi("Locale")?.onChange?.(handler);
+        return typeof unsubscribe === "function" ? unsubscribe : () => {
+        };
       },
       async call(method, params = {}) {
         if (method in CLOUD_SAVE_INVOKERS) return callCloudSave(method, params);
@@ -824,6 +856,18 @@
   function shareResultOf(raw) {
     if (!raw || typeof raw !== "object") return null;
     return { status: raw.status === "opened" ? "opened" : "cancelled" };
+  }
+  var LOCALE_SOURCES = /* @__PURE__ */ new Set(["user", "system", "device"]);
+  function localeOf(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    if (typeof raw.locale !== "string" || !raw.locale) return null;
+    if (!LOCALE_SOURCES.has(raw.source)) return null;
+    const languages = Array.isArray(raw.languages) ? raw.languages.filter((tag) => typeof tag === "string" && tag) : [];
+    return {
+      locale: raw.locale,
+      source: raw.source,
+      languages: languages.length ? languages : [raw.locale]
+    };
   }
 
   // src/room.js
@@ -985,10 +1029,11 @@
   }
 
   // src/sdk.js
-  var VERSION = "0.2.0";
+  var VERSION = "0.3.0";
   var REQUIRED_PROTOCOL_VERSION = 1;
   var PLAYER_STATE_PROTOCOL_VERSION = 2;
   var SHARE_PROTOCOL_VERSION = 3;
+  var LOCALE_PROTOCOL_VERSION = 4;
   var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
   var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
   var noneBackend = {
@@ -1097,6 +1142,33 @@
         return result.ok && result.value === true;
       }
     };
+    const locale = {
+      get: () => mapped("locale.get", void 0, required(localeOf), LOCALE_PROTOCOL_VERSION),
+      current() {
+        const active = backend();
+        if (!active.isAvailable() || active.protocolVersion() < LOCALE_PROTOCOL_VERSION) return null;
+        try {
+          return localeOf(active.localeCurrent?.());
+        } catch {
+          return null;
+        }
+      },
+      onChange(handler) {
+        const active = backend();
+        if (typeof handler !== "function") return () => {
+        };
+        if (!active.isAvailable() || active.protocolVersion() < LOCALE_PROTOCOL_VERSION) {
+          return () => {
+          };
+        }
+        const forward = (raw) => {
+          const value = localeOf(raw);
+          if (value) handler(value);
+        };
+        return active.localeOnChange?.(forward) ?? (() => {
+        });
+      }
+    };
     const net = {
       async join(rawOptions) {
         const opts = rawOptions ?? {};
@@ -1150,6 +1222,7 @@
       playerState,
       cloudSave,
       share,
+      locale,
       net,
       mock: mockBackend.controls
     };

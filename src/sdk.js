@@ -5,6 +5,7 @@ import {
   cloudSaveOf,
   leaderboardDefinitionOf,
   leaderboardPageOf,
+  localeOf,
   playerOf,
   playerStateOf,
   shareResultOf,
@@ -13,10 +14,11 @@ import {
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
+const LOCALE_PROTOCOL_VERSION = 4;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -144,6 +146,31 @@ export function createGRush(options = {}) {
     },
   };
 
+  const locale = {
+    get: () => mapped("locale.get", undefined, required(localeOf), LOCALE_PROTOCOL_VERSION),
+    current() {
+      const active = backend();
+      if (!active.isAvailable() || active.protocolVersion() < LOCALE_PROTOCOL_VERSION) return null;
+      try {
+        return localeOf(active.localeCurrent?.());
+      } catch {
+        return null;
+      }
+    },
+    onChange(handler) {
+      const active = backend();
+      if (typeof handler !== "function") return () => {};
+      if (!active.isAvailable() || active.protocolVersion() < LOCALE_PROTOCOL_VERSION) {
+        return () => {};
+      }
+      const forward = (raw) => {
+        const value = localeOf(raw);
+        if (value) handler(value);
+      };
+      return active.localeOnChange?.(forward) ?? (() => {});
+    },
+  };
+
   const net = {
     async join(rawOptions) {
       const opts = rawOptions ?? {};
@@ -198,6 +225,7 @@ export function createGRush(options = {}) {
     playerState,
     cloudSave,
     share,
+    locale,
     net,
     mock: mockBackend.controls,
   };

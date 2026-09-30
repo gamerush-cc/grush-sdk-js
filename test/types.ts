@@ -30,6 +30,17 @@ async function useSdk(): Promise<void> {
     await GRush.share.share({ image: new Uint8Array([1]) });
   }
 
+  const language = await GRush.locale.get();
+  const tag: string | null = language.ok ? language.value.locale : null;
+  const langs: string[] = GRush.locale.current()?.languages ?? [];
+  const stop: () => void = GRush.locale.onChange((next) => {
+    const source: "user" | "system" | "device" = next.source;
+    void source;
+  });
+  void tag;
+  void langs;
+  stop();
+
   const local = createGRush({ backend: "mock" });
   local.mock.config.shareStatus = "cancelled";
   local.mock.defineLeaderboard("score", { sort: "asc", minValue: 0 });

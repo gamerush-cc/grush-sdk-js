@@ -7,6 +7,7 @@ const SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const PLAYER_STATE_MAX_BYTES = 4 * 1024;
 const CLOUD_SAVE_MAX_BYTES = 256 * 1024;
 const OPAQUE_STRING_MIN_LENGTH = 256;
+const LOCALE_FALLBACK = "ja";
 const BASE64_LIKE = /^[A-Za-z0-9+/\-_]+={0,2}$/;
 
 function containsOpaqueString(value) {
@@ -16,6 +17,26 @@ function containsOpaqueString(value) {
   if (Array.isArray(value)) return value.some(containsOpaqueString);
   if (value && typeof value === "object") return Object.values(value).some(containsOpaqueString);
   return false;
+}
+
+function deviceLanguages() {
+  const list = globalThis.navigator?.languages;
+  const single = globalThis.navigator?.language;
+  const tags = Array.isArray(list) ? list : [single];
+  return tags.filter((tag) => typeof tag === "string" && tag);
+}
+
+function mockLocale(config) {
+  const device = deviceLanguages();
+  if (typeof config.locale === "string" && config.locale) {
+    const languages = [config.locale, ...device.filter((tag) => tag !== config.locale)];
+    return { locale: config.locale, source: "user", languages };
+  }
+  return {
+    locale: device[0] ?? LOCALE_FALLBACK,
+    source: "device",
+    languages: device.length ? device : [LOCALE_FALLBACK],
+  };
 }
 
 export function defaultMockConfig() {
@@ -29,6 +50,7 @@ export function defaultMockConfig() {
     maxPeers: 8,
     shareAvailable: true,
     shareStatus: "opened",
+    locale: null,
   };
 }
 
@@ -215,6 +237,7 @@ export function createMockBackend(config) {
       return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
     },
     "share.getAvailability": () => ok(config.shareAvailable === true),
+    "locale.get": () => ok(mockLocale(config)),
     "net.join": (p) => {
       const joined = net.join(p);
       if (joined === null) return failure(CODES.internal, "Failed to join a room.");
@@ -253,7 +276,9 @@ export function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 3,
+    protocolVersion: () => 4,
+    localeCurrent: () => mockLocale(config),
+    localeOnChange: () => () => {},
     async call(method, params = {}) {
       const handler = handlers[method];
       if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);

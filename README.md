@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.2.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.3.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -65,6 +65,9 @@ TypeScript の型は `grush-sdk.d.ts`。
 | `GRush.cloudSave.load(slot)` / `save(payload, slot, { baseRevision })` / `remove(slot)` | `{ slot, payload, revision, createdAt, updatedAt }` など |
 | `GRush.share.share({ text, image })` | `{ status: "opened" \| "cancelled" }`（下記） |
 | `GRush.share.isAvailable()` | `true` / `false`（結果オブジェクトではなく真偽値。失敗しない） |
+| `GRush.locale.get()` | `{ locale, source, languages }`（下記） |
+| `GRush.locale.current()` | 同じ形、または `null`（同期。結果オブジェクトではない） |
+| `GRush.locale.onChange(handler)` | 解除関数（表示言語が決まったとき・変わったときに `handler` を呼ぶ） |
 | `GRush.net.join({ mode, roomCode })` | 部屋（下記） |
 
 失敗時の `code` は `unsupported` / `unavailable` / `timeout` / `rateLimited`（`retryAfterMs` 付き）/ `signInRequired` / `consentDeclined` / `invalidParams` / `conflict`（クラウドセーブの版ずれ）/ `internal`。
@@ -85,6 +88,19 @@ if (await GRush.share.isAvailable()) {
 - 共有は 5 秒に 1 回まで。1 回のボタン操作で呼ぶのは 1 回にする。共有したことを条件に報酬を出さない
 - 本文は 100 文字まで。URL と @メンションを含むと `invalidParams`。添付される URL は GameRush がゲームのページから作り、ゲームからは指定できない
 - 古い GameRush（`protocolVersion` 3 未満）では `unsupported`
+
+### 表示言語
+
+```js
+const language = await GRush.locale.get();
+if (language.ok) console.log(language.value.locale, language.value.source);
+const stop = GRush.locale.onChange((next) => console.log(next.locale));
+```
+
+- `locale` は BCP 47 の言語タグ（例 `"ja"` / `"en-US"`）。`source` は `"user"`（GameRush の言語設定）/ `"system"` / `"device"`（端末の言語）。`languages` は優先順の一覧
+- 返る配列は複製。書き換えても GameRush 側には影響しない
+- 古い GameRush（`protocolVersion` 4 未満）では `get()` が `unsupported`、`current()` が `null`、`onChange` は何もしない解除関数を返す
+- モックは `GRush.mock.config.locale`（既定 `null` = ブラウザの言語、`source: "device"`）で切り替える。`onChange` は呼ばれない
 
 ### 対戦
 
