@@ -52,6 +52,14 @@ test("locale.get and current read the runtime and copy the languages", async () 
   assert.deepEqual(runtime.current().languages, ["ja", "en-US"]);
 });
 
+test("locale keeps a source it does not know instead of dropping the value", async () => {
+  installRuntime(fakeLocale({ locale: "fr", source: "future", languages: ["fr"] }));
+  const result = await sdk.locale.get();
+  assert.equal(result.ok, true);
+  assert.equal(result.value.source, "future");
+  assert.equal(sdk.locale.current().locale, "fr");
+});
+
 test("locale.onChange forwards copies and unsubscribes", () => {
   const runtime = fakeLocale(JA);
   installRuntime(runtime);

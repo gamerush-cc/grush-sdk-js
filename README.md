@@ -92,12 +92,12 @@ if (await GRush.share.isAvailable()) {
 ### 表示言語
 
 ```js
+const stop = GRush.locale.onChange((next) => console.log(next.locale));
 const language = await GRush.locale.get();
 if (language.ok) console.log(language.value.locale, language.value.source);
-const stop = GRush.locale.onChange((next) => console.log(next.locale));
 ```
 
-- `locale` は BCP 47 の言語タグ（例 `"ja"` / `"en-US"`）。`source` は `"user"`（GameRush の言語設定）/ `"system"` / `"device"`（端末の言語）。`languages` は優先順の一覧
+- `locale` は BCP 47 の言語タグ（例 `"ja"` / `"en-US"`）。`source` は `"user"`（GameRush の言語設定）/ `"system"` / `"device"`（端末の言語）で、今後増えても動くように書く。`languages` は優先順の一覧
 - 返る配列は複製。書き換えても GameRush 側には影響しない
 - 古い GameRush（`protocolVersion` 4 未満）では `get()` が `unsupported`、`current()` が `null`、`onChange` は何もしない解除関数を返す
 - モックは `GRush.mock.config.locale`（既定 `null` = ブラウザの言語、`source: "device"`）で切り替える。`onChange` は呼ばれない

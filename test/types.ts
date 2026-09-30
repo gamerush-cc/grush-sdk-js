@@ -34,7 +34,7 @@ async function useSdk(): Promise<void> {
   const tag: string | null = language.ok ? language.value.locale : null;
   const langs: string[] = GRush.locale.current()?.languages ?? [];
   const stop: () => void = GRush.locale.onChange((next) => {
-    const source: "user" | "system" | "device" = next.source;
+    const source: string = next.source;
     void source;
   });
   void tag;

@@ -103,7 +103,7 @@ export type GRushShareOptions = { text?: string; image?: GRushShareImage };
 export type GRushShareStatus = "opened" | "cancelled";
 export type GRushShareResult = { status: GRushShareStatus };
 
-export type GRushLocaleSource = "user" | "system" | "device";
+export type GRushLocaleSource = "user" | "system" | "device" | (string & {});
 export type GRushLocale = {
   locale: string;
   source: GRushLocaleSource;

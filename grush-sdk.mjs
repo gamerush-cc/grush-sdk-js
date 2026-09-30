@@ -856,15 +856,13 @@ function shareResultOf(raw) {
   if (!raw || typeof raw !== "object") return null;
   return { status: raw.status === "opened" ? "opened" : "cancelled" };
 }
-var LOCALE_SOURCES = /* @__PURE__ */ new Set(["user", "system", "device"]);
 function localeOf(raw) {
   if (!raw || typeof raw !== "object") return null;
   if (typeof raw.locale !== "string" || !raw.locale) return null;
-  if (!LOCALE_SOURCES.has(raw.source)) return null;
   const languages = Array.isArray(raw.languages) ? raw.languages.filter((tag) => typeof tag === "string" && tag) : [];
   return {
     locale: raw.locale,
-    source: raw.source,
+    source: typeof raw.source === "string" && raw.source ? raw.source : "device",
     languages: languages.length ? languages : [raw.locale]
   };
 }
