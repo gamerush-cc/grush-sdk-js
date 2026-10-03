@@ -132,6 +132,16 @@ test("player state keeps the server's shape rules", async () => {
   assert.equal((await sdk.playerState.report("friend")).value, true);
 });
 
+test("player state counts its 4KB limit in UTF-8 bytes, like the server", async () => {
+  sdk.mock.reset();
+  // {"note":"…"} は 11 バイト。「あ」は UTF-8 で 3 バイトなので、1,361 文字と ASCII 2 文字でちょうど 4,096 バイト。
+  const fits = { note: `${"あ".repeat(1361)}ab` };
+  const over = { note: `${"あ".repeat(1361)}abc` };
+  assert.equal(JSON.stringify(over).length, 1375);
+  assert.equal((await sdk.playerState.setMine(fits)).ok, true);
+  assert.equal((await sdk.playerState.setMine(over)).code, "invalidParams");
+});
+
 test("cloud save round-trips and guests get signInRequired", async () => {
   sdk.mock.reset();
   assert.equal((await sdk.cloudSave.load()).value, null);
