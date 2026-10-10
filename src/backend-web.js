@@ -53,13 +53,19 @@ const INVOKERS = {
     ),
 };
 
+// `fallback` is in the params only when the runtime is new enough to read it (see sdk.js).
+function fallbackOptions(p) {
+  return "fallback" in p ? { fallback: p.fallback } : {};
+}
+
 const CLOUD_SAVE_INVOKERS = {
-  "cloudSave.load": (api, p) => api.loadWithMetadata(p.slot),
+  "cloudSave.load": (api, p) => api.loadWithMetadata(p.slot, fallbackOptions(p)),
   "cloudSave.save": (api, p) => {
-    const options = typeof p.baseRevision === "number" ? { baseRevision: p.baseRevision } : {};
+    const options = fallbackOptions(p);
+    if (typeof p.baseRevision === "number") options.baseRevision = p.baseRevision;
     return api.save(p.payload, p.slot, options);
   },
-  "cloudSave.remove": (api, p) => api.remove(p.slot),
+  "cloudSave.remove": (api, p) => api.remove(p.slot, fallbackOptions(p)),
 };
 
 function currentApis() {

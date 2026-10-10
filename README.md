@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.3.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.4.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -62,7 +62,7 @@ TypeScript の型は `grush-sdk.d.ts`。
 | `GRush.leaderboards.submit(key, value, { metadata, operationId })` | `{ accepted, updated, value, rank, verified }` |
 | `GRush.leaderboards.top(key, { limit, offset })` / `aroundMe(key, { range })` / `friends(key, { limit })` | `{ key, title, entries, total, verified, ... }` |
 | `GRush.playerState.getMine()` / `setMine(payload, baseRevision)` / `get(pseudoIds)` / `report(pseudoId)` | `{ pseudoId, payload, revision, updatedAt }` など |
-| `GRush.cloudSave.load(slot)` / `save(payload, slot, { baseRevision })` / `remove(slot)` | `{ slot, payload, revision, createdAt, updatedAt }` など |
+| `GRush.cloudSave.load(slot, { fallback })` / `save(payload, slot, { baseRevision, fallback })` / `remove(slot, { fallback })` | `{ slot, payload, revision, createdAt, updatedAt, storage }` など（下記） |
 | `GRush.share.share({ text, image })` | `{ status: "opened" \| "cancelled" }`（下記） |
 | `GRush.share.isAvailable()` | `true` / `false`（結果オブジェクトではなく真偽値。失敗しない） |
 | `GRush.locale.get()` | `{ locale, source, languages }`（下記） |
@@ -73,6 +73,27 @@ TypeScript の型は `grush-sdk.d.ts`。
 失敗時の `code` は `unsupported` / `unavailable` / `timeout` / `rateLimited`（`retryAfterMs` 付き）/ `signInRequired` / `consentDeclined` / `invalidParams` / `conflict`（クラウドセーブの版ずれ）/ `internal`。
 
 集約が `sum` のランキングへ投稿を再送するときは、必ず同じ `operationId` を渡すこと。渡さないと二重に加算される。
+
+### クラウドセーブ
+
+```js
+const loaded = await GRush.cloudSave.load("default", { fallback: "local" });
+if (loaded.ok) {
+  const revision = loaded.value?.revision ?? 0;
+  const saved = await GRush.cloudSave.save({ stage: 3 }, "default", {
+    baseRevision: revision,
+    fallback: "local",
+  });
+  if (saved.ok) console.log(saved.value.storage);
+}
+```
+
+- `fallback: "local"` を渡すと、GameRush がプレイヤーのサインインを確かめられないとき（渡さなければ `signInRequired` になるとき）だけ、セーブを端末に読み書きする。そのとき返る項目は `storage: "local"`、`revision: 0`。クラウドに置けたときは `storage: "cloud"`
+- 端末のセーブはその端末のそのアプリ（ブラウザ）にだけあり、ブラウザが消すことがある。サインインしても自動ではクラウドへ上がらない。サインイン後の `load` でクラウドに無ければ端末のセーブが返るので、それを `save` するとクラウドへ上がる。`fallback: "local"` 付きの `save` / `remove` がクラウドで成功すると、同じスロットの、そのプレイヤーの端末のセーブと、どのアカウントのものか分からない端末のセーブが消える。別のアカウントのものは残る
+- サインインが戻るとクラウドのセーブが優先される。サインインを確かめられなかった間に端末へ保存した新しい分は、クラウドにセーブがあれば `load` で返らない。`fallback: "local"` 付きの保存がクラウドで成功すると、そのプレイヤーの端末のセーブは消える
+- 端末への書き込みでは `baseRevision` を見ない。端末のセーブの `revision`（`0`）をそのまま `baseRevision` に渡すと、クラウドが空なら書け、クラウドにあれば `conflict` になる
+- サインイン直後の `save` が `conflict` になったら、`load` してから書き直す
+- `fallback` に `"local"` 以外を渡すと `invalidParams`。古い GameRush（`protocolVersion` 5 未満）では `fallback` を無視し、渡さないときと同じ呼び出しになる
 
 ### 共有
 
@@ -142,7 +163,7 @@ if (GRush.backend === "mock") {
 }
 ```
 
-モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
+モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
 
 **`unreliableDropRate` は既定 0 だが、出荷前に必ず 0 より大きくして試すこと。** パケットが落ちる前提で書けているかを確かめられる場所はここだけになる。
 

@@ -82,12 +82,36 @@ export type GRushPlayerState = {
   updatedAt: string;
 };
 
+/**
+ * セーブの置き場所。`"local"` は、GameRush がプレイヤーのサインインを確かめられず、端末
+ * （ブラウザの保存領域）に置いたことを表す。`fallback: "local"` を渡したときだけ現れる。
+ */
+export type GRushCloudSaveStorage = "cloud" | "local";
+
 export type GRushCloudSave = {
   slot: string;
   payload: JsonValue;
+  /** クラウドの版。1 から増える。端末のセーブは常に 0。 */
   revision: number;
   createdAt: string;
   updatedAt: string;
+  storage: GRushCloudSaveStorage;
+};
+
+/**
+ * `"local"` を渡すと、GameRush がサインインを確かめられないとき（クラウドなら `signInRequired`
+ * になるとき）だけ、端末に読み書きする。ほかの失敗では切り替えない。端末のセーブはブラウザが
+ * 消すことがある。`protocolVersion` 5 未満の GameRush では無視され、渡さないときと同じになる。
+ */
+export type GRushCloudSaveFallback = "local";
+
+export type GRushCloudSaveOptions = { fallback?: GRushCloudSaveFallback };
+export type GRushCloudSaveWriteOptions = GRushCloudSaveOptions & {
+  /**
+   * 前に読んだ `revision`。クラウドの版がこれと違えば `conflict` で書かない。`0` は「クラウドに
+   * まだ無いときだけ書く」。端末への書き込みでは見ない（最後の書き込みが勝つ）。
+   */
+  baseRevision?: number;
 };
 
 export type GRushShareImage =
@@ -241,13 +265,31 @@ export interface GRushSdk {
     report(pseudoId: string): Promise<GRushResult<boolean>>;
   };
   cloudSave: {
-    load(slot?: string): Promise<GRushResult<GRushCloudSave | null>>;
+    /**
+     * スロットのセーブを読む。無ければ `null`。`fallback: "local"` のとき、サインイン済みでクラウドに
+     * 無ければ端末のセーブを返す。別のアカウントのものと分かっている端末のセーブは返さず、どのアカウントか
+     * 分からないまま書いたものは返す。
+     */
+    load(
+      slot?: string,
+      options?: GRushCloudSaveOptions,
+    ): Promise<GRushResult<GRushCloudSave | null>>;
+    /**
+     * スロットへ書く。`fallback: "local"` のとき、クラウドへ書けたら、同じスロットの、このプレイヤーの
+     * 端末のセーブと、どのアカウントのものか分からない端末のセーブを消す。
+     * サインイン後の書き込みが `conflict` になったら、`load` してから書き直す。
+     */
     save(
       payload: JsonValue,
       slot?: string,
-      options?: { baseRevision?: number },
+      options?: GRushCloudSaveWriteOptions,
     ): Promise<GRushResult<GRushCloudSave>>;
-    remove(slot?: string): Promise<GRushResult<true>>;
+    /**
+     * スロットを消す。`fallback: "local"` のとき、クラウドで消せたら、同じスロットの、このプレイヤーの
+     * 端末のセーブと、どのアカウントのものか分からない端末のセーブも消す。サインインを確かめられない
+     * ときは端末のセーブを消す。
+     */
+    remove(slot?: string, options?: GRushCloudSaveOptions): Promise<GRushResult<true>>;
   };
   share: {
     share(options?: GRushShareOptions): Promise<GRushResult<GRushShareResult>>;

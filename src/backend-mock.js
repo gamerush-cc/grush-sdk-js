@@ -97,9 +97,18 @@ function invalid(message) {
   return failure(CODES.invalidParams, message);
 }
 
+// Mirrors GameRush: no option or null keeps the cloud-only behavior, "local" opts in, anything else
+// is rejected.
+function fallbackOf(value) {
+  if (value === undefined || value === null) return { ok: true, local: false };
+  if (value === "local") return { ok: true, local: true };
+  return { ok: false };
+}
+
 export function createMockBackend(config) {
   const otherStates = new Map();
   const cloudSaves = new Map();
+  const localSaves = new Map();
   let myState = null;
 
   const consented = () => config.signedIn && readStored().consent === true;
@@ -171,14 +180,31 @@ export function createMockBackend(config) {
     return ok(states);
   }
 
-  function saveCloud({ payload, slot, baseRevision }) {
+  function saveCloud({ payload, slot, baseRevision, fallback }) {
     const key = slot || "default";
     if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
     if (payload === undefined || payload === null)
       return invalid("Cloud save payload is required.");
     if (jsonBytes(payload) > CLOUD_SAVE_MAX_BYTES)
       return invalid("Cloud save payload is too large.");
-    if (!config.signedIn) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+    const mode = fallbackOf(fallback);
+    if (!mode.ok) return invalid("Invalid cloud save fallback.");
+    if (!config.signedIn) {
+      if (!mode.local) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+      // A device save has no revision history, so baseRevision is not checked and the last write wins.
+      const now = new Date().toISOString();
+      const previous = localSaves.get(key);
+      const save = {
+        slot: key,
+        payload: structuredClone(payload),
+        revision: 0,
+        createdAt: previous ? previous.createdAt : now,
+        updatedAt: now,
+        storage: "local",
+      };
+      localSaves.set(key, save);
+      return ok(save);
+    }
     const current = cloudSaves.get(key);
     const revision = current ? current.revision : 0;
     if (typeof baseRevision === "number" && baseRevision !== revision) {
@@ -193,13 +219,35 @@ export function createMockBackend(config) {
       updatedAt: now,
     };
     cloudSaves.set(key, save);
+    if (mode.local) localSaves.delete(key);
     return ok(save);
   }
 
-  function cloudGuard(slot) {
-    if (!SLOT_PATTERN.test(slot || "default")) return invalid("Invalid cloud save slot.");
-    if (!config.signedIn) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
-    return null;
+  function loadCloud({ slot, fallback }) {
+    const key = slot || "default";
+    if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+    const mode = fallbackOf(fallback);
+    if (!mode.ok) return invalid("Invalid cloud save fallback.");
+    if (!config.signedIn) {
+      if (!mode.local) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+      return ok(localSaves.get(key) ?? null);
+    }
+    const save = cloudSaves.get(key);
+    if (save) return ok(save);
+    return ok(mode.local ? (localSaves.get(key) ?? null) : null);
+  }
+
+  function removeCloud({ slot, fallback }) {
+    const key = slot || "default";
+    if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+    const mode = fallbackOf(fallback);
+    if (!mode.ok) return invalid("Invalid cloud save fallback.");
+    if (!config.signedIn && !mode.local) {
+      return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+    }
+    if (config.signedIn) cloudSaves.delete(key);
+    if (mode.local) localSaves.delete(key);
+    return ok(true);
   }
 
   function fromBoard(outcome, pick) {
@@ -229,9 +277,9 @@ export function createMockBackend(config) {
       if (!target || target.hidden) return invalid("No player state for that id.");
       return ok(config.confirmPlayerStateReport === true);
     },
-    "cloudSave.load": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.get(p.slot || "default") ?? null),
+    "cloudSave.load": loadCloud,
     "cloudSave.save": saveCloud,
-    "cloudSave.remove": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.delete(p.slot || "default")),
+    "cloudSave.remove": removeCloud,
     "share.open": () => {
       if (!config.shareAvailable) return failure(CODES.unavailable, "Sharing is unavailable here.");
       return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
@@ -265,6 +313,7 @@ export function createMockBackend(config) {
       leaderboards.reset();
       otherStates.clear();
       cloudSaves.clear();
+      localSaves.clear();
       myState = null;
       net.reset();
       Object.assign(config, defaultMockConfig());
@@ -276,7 +325,7 @@ export function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 4,
+    protocolVersion: () => 5,
     localeCurrent: () => mockLocale(config),
     localeOnChange: () => () => {},
     async call(method, params = {}) {

@@ -159,6 +159,80 @@ test("cloud save round-trips and guests get signInRequired", async () => {
   assert.equal((await sdk.cloudSave.load()).code, "signInRequired");
 });
 
+test("a guest's local save moves to the cloud after signing in", async () => {
+  sdk.mock.reset();
+  assert.equal(sdk.protocolVersion(), 5);
+  sdk.mock.config.signedIn = false;
+  const local = { fallback: "local" };
+  assert.equal((await sdk.cloudSave.load("default", local)).value, null);
+  const saved = await sdk.cloudSave.save({ coins: 1 }, "default", { ...local, baseRevision: 7 });
+  assert.equal(saved.value.storage, "local");
+  assert.equal(saved.value.revision, 0);
+  const again = await sdk.cloudSave.save({ coins: 2 }, "default", local);
+  assert.equal(again.value.createdAt, saved.value.createdAt);
+  assert.deepEqual((await sdk.cloudSave.load("default", local)).value.payload, { coins: 2 });
+  assert.equal((await sdk.cloudSave.load()).code, "signInRequired");
+  assert.equal((await sdk.cloudSave.save({ coins: 3 })).code, "signInRequired");
+
+  sdk.mock.config.signedIn = true;
+  assert.equal((await sdk.cloudSave.load()).value, null);
+  const found = (await sdk.cloudSave.load("default", local)).value;
+  assert.equal(found.storage, "local");
+  const uploaded = await sdk.cloudSave.save(found.payload, "default", {
+    ...local,
+    baseRevision: found.revision,
+  });
+  assert.equal(uploaded.value.storage, "cloud");
+  assert.equal(uploaded.value.revision, 1);
+
+  sdk.mock.config.signedIn = false;
+  assert.equal((await sdk.cloudSave.load("default", local)).value, null);
+});
+
+test("a cloud save wins over a local one, and a stale local revision conflicts", async () => {
+  sdk.mock.reset();
+  sdk.mock.config.signedIn = false;
+  const local = { fallback: "local" };
+  await sdk.cloudSave.save({ coins: 1 }, "default", local);
+  sdk.mock.config.signedIn = true;
+  await sdk.cloudSave.save({ coins: 9 });
+  const loaded = (await sdk.cloudSave.load("default", local)).value;
+  assert.equal(loaded.storage, "cloud");
+  assert.deepEqual(loaded.payload, { coins: 9 });
+  assert.equal(
+    (await sdk.cloudSave.save({ coins: 1 }, "default", { ...local, baseRevision: 0 })).code,
+    "conflict",
+  );
+  assert.equal((await sdk.cloudSave.remove("default", local)).value, true);
+  sdk.mock.config.signedIn = false;
+  assert.equal((await sdk.cloudSave.load("default", local)).value, null);
+});
+
+test("local saves are dropped by remove and reset, and bad fallbacks are rejected", async () => {
+  sdk.mock.reset();
+  sdk.mock.config.signedIn = false;
+  const local = { fallback: "local" };
+  await sdk.cloudSave.save({ coins: 1 }, "a", local);
+  await sdk.cloudSave.save({ coins: 2 }, "b", local);
+  assert.equal((await sdk.cloudSave.remove("a", local)).value, true);
+  assert.equal((await sdk.cloudSave.load("a", local)).value, null);
+  assert.equal((await sdk.cloudSave.remove("a")).code, "signInRequired");
+  assert.equal((await sdk.cloudSave.load("b", null)).code, "signInRequired");
+  assert.equal((await sdk.cloudSave.load("b", { fallback: null })).code, "signInRequired");
+
+  for (const fallback of ["cloud", "LOCAL", 1, true, {}]) {
+    assert.equal((await sdk.cloudSave.load("b", { fallback })).code, "invalidParams");
+    assert.equal((await sdk.cloudSave.save({ c: 1 }, "b", { fallback })).code, "invalidParams");
+    assert.equal((await sdk.cloudSave.remove("b", { fallback })).code, "invalidParams");
+  }
+  assert.equal((await sdk.cloudSave.load("bad slot", local)).code, "invalidParams");
+  assert.equal((await sdk.cloudSave.save(null, "b", local)).code, "invalidParams");
+
+  sdk.mock.reset();
+  sdk.mock.config.signedIn = false;
+  assert.equal((await sdk.cloudSave.load("b", local)).value, null);
+});
+
 test("null options and unserializable values come back as results, not exceptions", async () => {
   sdk.mock.reset();
   sdk.mock.defineLeaderboard("score");

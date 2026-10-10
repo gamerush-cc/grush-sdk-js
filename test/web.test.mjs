@@ -204,6 +204,69 @@ test("cloud save failures map to codes", async () => {
   assert.equal((await sdk.cloudSave.load()).code, "unsupported");
 });
 
+test("cloud save passes fallback only to a runtime of protocol 5 or later", async () => {
+  runtime.CloudSave.save = (...args) => {
+    calls.push(["save", ...args]);
+    return Promise.resolve({ slot: "default", payload: args[0], revision: 1 });
+  };
+  runtime.CloudSave.remove = (...args) => {
+    calls.push(["remove", ...args]);
+    return Promise.resolve(true);
+  };
+
+  runtime.Info.protocolVersion = 4;
+  await sdk.cloudSave.load("default", { fallback: "local" });
+  assert.deepEqual(calls.at(-1), ["load", "default", {}]);
+  const old = await sdk.cloudSave.save({ c: 2 }, "default", { baseRevision: 0, fallback: "local" });
+  assert.equal(old.ok, true);
+  assert.deepEqual(calls.at(-1), ["save", { c: 2 }, "default", { baseRevision: 0 }]);
+  await sdk.cloudSave.remove("default", { fallback: "local" });
+  assert.deepEqual(calls.at(-1), ["remove", "default", {}]);
+
+  runtime.Info.protocolVersion = 5;
+  await sdk.cloudSave.load("default", { fallback: "local" });
+  assert.deepEqual(calls.at(-1), ["load", "default", { fallback: "local" }]);
+  await sdk.cloudSave.save({ c: 2 }, "default", { baseRevision: 0, fallback: "local" });
+  assert.deepEqual(calls.at(-1), [
+    "save",
+    { c: 2 },
+    "default",
+    { fallback: "local", baseRevision: 0 },
+  ]);
+  await sdk.cloudSave.remove("default", { fallback: "local" });
+  assert.deepEqual(calls.at(-1), ["remove", "default", { fallback: "local" }]);
+
+  await sdk.cloudSave.save({ c: 2 }, "default", { baseRevision: 3 });
+  assert.deepEqual(calls.at(-1), ["save", { c: 2 }, "default", { baseRevision: 3 }]);
+  await sdk.cloudSave.load("default", null);
+  assert.deepEqual(calls.at(-1), ["load", "default", {}]);
+});
+
+test("cloud save tells where the save lives and checks fallback in the runtime", async () => {
+  runtime.Info.protocolVersion = 5;
+  assert.equal((await sdk.cloudSave.load()).value.storage, "cloud");
+
+  runtime.CloudSave.loadWithMetadata = () =>
+    Promise.resolve({ slot: "default", payload: { c: 1 }, revision: 0, storage: "local" });
+  assert.equal((await sdk.cloudSave.load()).value.storage, "local");
+
+  runtime.CloudSave.loadWithMetadata = () =>
+    Promise.resolve({ slot: "default", payload: { c: 1 }, revision: 1, storage: "somewhere" });
+  assert.equal((await sdk.cloudSave.load()).value.storage, "cloud");
+
+  runtime.CloudSave.save = () => Promise.reject(new Error("Invalid cloud save fallback."));
+  assert.equal(
+    (await sdk.cloudSave.save({ c: 1 }, "default", { fallback: "disk" })).code,
+    "invalidParams",
+  );
+  runtime.CloudSave.save = () =>
+    Promise.reject(Object.assign(new Error("Local save failed."), { status: 0 }));
+  assert.equal(
+    (await sdk.cloudSave.save({ c: 1 }, "default", { fallback: "local" })).code,
+    "unavailable",
+  );
+});
+
 test("rooms wrap the runtime room and normalize its events", async () => {
   const room = (await sdk.net.join({ mode: "duel", roomCode: "ABCD" })).value;
   assert.deepEqual(calls.at(-1), ["join", { mode: "duel", roomCode: "ABCD" }]);

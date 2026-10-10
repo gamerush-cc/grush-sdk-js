@@ -41,6 +41,19 @@ async function useSdk(): Promise<void> {
   void langs;
   stop();
 
+  const loaded = await GRush.cloudSave.load("default", { fallback: "local" });
+  if (loaded.ok && loaded.value) {
+    const storage: "cloud" | "local" = loaded.value.storage;
+    void storage;
+    await GRush.cloudSave.save(loaded.value.payload, "default", {
+      baseRevision: loaded.value.revision,
+      fallback: "local",
+    });
+  }
+  await GRush.cloudSave.remove("default", { fallback: "local" });
+  // @ts-expect-error fallback takes only "local".
+  await GRush.cloudSave.load("default", { fallback: "cloud" });
+
   const local = createGRush({ backend: "mock" });
   local.mock.config.shareStatus = "cancelled";
   local.mock.defineLeaderboard("score", { sort: "asc", minValue: 0 });

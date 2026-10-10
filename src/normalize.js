@@ -104,6 +104,7 @@ export function cloudSaveOf(raw) {
     revision: number(raw.revision),
     createdAt: text(raw.createdAt),
     updatedAt: text(raw.updatedAt),
+    storage: raw.storage === "local" ? "local" : "cloud",
   };
 }
 

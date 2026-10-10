@@ -14,11 +14,12 @@ import {
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
 const LOCALE_PROTOCOL_VERSION = 4;
+const CLOUD_SAVE_LOCAL_PROTOCOL_VERSION = 5;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -116,15 +117,29 @@ export function createGRush(options = {}) {
     report: (pseudoId) => statesCall("playerState.report", { pseudoId }, (raw) => raw === true),
   };
 
+  // A GameRush older than protocol 5 does not know `fallback`. The option is dropped there instead of
+  // failing the call, so signed-in players keep saving to the cloud as before.
+  function withFallback(params, extra) {
+    if (
+      extra?.fallback !== undefined &&
+      backend().protocolVersion() >= CLOUD_SAVE_LOCAL_PROTOCOL_VERSION
+    ) {
+      params.fallback = extra.fallback;
+    }
+    return params;
+  }
+
   const cloudSave = {
-    load: (slot) => mapped("cloudSave.load", { slot }, orNull(cloudSaveOf), 0),
+    load: (slot, extra) =>
+      mapped("cloudSave.load", withFallback({ slot }, extra), orNull(cloudSaveOf), 0),
     save(payload, slot, rawExtra) {
       const extra = rawExtra ?? {};
       const params = { payload, slot };
       if (typeof extra.baseRevision === "number") params.baseRevision = extra.baseRevision;
-      return mapped("cloudSave.save", params, required(cloudSaveOf), 0);
+      return mapped("cloudSave.save", withFallback(params, extra), required(cloudSaveOf), 0);
     },
-    remove: (slot) => mapped("cloudSave.remove", { slot }, () => true, 0),
+    remove: (slot, extra) =>
+      mapped("cloudSave.remove", withFallback({ slot }, extra), () => true, 0),
   };
 
   const share = {

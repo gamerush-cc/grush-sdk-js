@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.3.0 */
+/*! GameRush SDK for JavaScript v0.4.0 */
 
 // src/mock-leaderboards.js
 function clamp(value, fallback, max) {
@@ -474,9 +474,15 @@ function snapshot(result) {
 function invalid(message) {
   return failure(CODES.invalidParams, message);
 }
+function fallbackOf(value) {
+  if (value === void 0 || value === null) return { ok: true, local: false };
+  if (value === "local") return { ok: true, local: true };
+  return { ok: false };
+}
 function createMockBackend(config) {
   const otherStates = /* @__PURE__ */ new Map();
   const cloudSaves = /* @__PURE__ */ new Map();
+  const localSaves = /* @__PURE__ */ new Map();
   let myState = null;
   const consented = () => config.signedIn && readStored().consent === true;
   function playerWire() {
@@ -537,14 +543,30 @@ function createMockBackend(config) {
     const states = pseudoIds.map((id) => otherStates.get(id)).filter((state) => state && !state.hidden).map(({ hidden: _hidden, ...state }) => state);
     return ok(states);
   }
-  function saveCloud({ payload, slot, baseRevision }) {
+  function saveCloud({ payload, slot, baseRevision, fallback }) {
     const key = slot || "default";
     if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
     if (payload === void 0 || payload === null)
       return invalid("Cloud save payload is required.");
     if (jsonBytes(payload) > CLOUD_SAVE_MAX_BYTES)
       return invalid("Cloud save payload is too large.");
-    if (!config.signedIn) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+    const mode = fallbackOf(fallback);
+    if (!mode.ok) return invalid("Invalid cloud save fallback.");
+    if (!config.signedIn) {
+      if (!mode.local) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+      const now2 = (/* @__PURE__ */ new Date()).toISOString();
+      const previous = localSaves.get(key);
+      const save2 = {
+        slot: key,
+        payload: structuredClone(payload),
+        revision: 0,
+        createdAt: previous ? previous.createdAt : now2,
+        updatedAt: now2,
+        storage: "local"
+      };
+      localSaves.set(key, save2);
+      return ok(save2);
+    }
     const current = cloudSaves.get(key);
     const revision = current ? current.revision : 0;
     if (typeof baseRevision === "number" && baseRevision !== revision) {
@@ -559,12 +581,33 @@ function createMockBackend(config) {
       updatedAt: now
     };
     cloudSaves.set(key, save);
+    if (mode.local) localSaves.delete(key);
     return ok(save);
   }
-  function cloudGuard(slot) {
-    if (!SLOT_PATTERN.test(slot || "default")) return invalid("Invalid cloud save slot.");
-    if (!config.signedIn) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
-    return null;
+  function loadCloud({ slot, fallback }) {
+    const key = slot || "default";
+    if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+    const mode = fallbackOf(fallback);
+    if (!mode.ok) return invalid("Invalid cloud save fallback.");
+    if (!config.signedIn) {
+      if (!mode.local) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+      return ok(localSaves.get(key) ?? null);
+    }
+    const save = cloudSaves.get(key);
+    if (save) return ok(save);
+    return ok(mode.local ? localSaves.get(key) ?? null : null);
+  }
+  function removeCloud({ slot, fallback }) {
+    const key = slot || "default";
+    if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+    const mode = fallbackOf(fallback);
+    if (!mode.ok) return invalid("Invalid cloud save fallback.");
+    if (!config.signedIn && !mode.local) {
+      return failure(CODES.signInRequired, "Cloud save requires sign-in.");
+    }
+    if (config.signedIn) cloudSaves.delete(key);
+    if (mode.local) localSaves.delete(key);
+    return ok(true);
   }
   function fromBoard(outcome, pick) {
     return outcome.error ? invalid(outcome.error) : ok(pick(outcome));
@@ -590,9 +633,9 @@ function createMockBackend(config) {
       if (!target || target.hidden) return invalid("No player state for that id.");
       return ok(config.confirmPlayerStateReport === true);
     },
-    "cloudSave.load": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.get(p.slot || "default") ?? null),
+    "cloudSave.load": loadCloud,
     "cloudSave.save": saveCloud,
-    "cloudSave.remove": (p) => cloudGuard(p.slot) ?? ok(cloudSaves.delete(p.slot || "default")),
+    "cloudSave.remove": removeCloud,
     "share.open": () => {
       if (!config.shareAvailable) return failure(CODES.unavailable, "Sharing is unavailable here.");
       return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
@@ -624,6 +667,7 @@ function createMockBackend(config) {
       leaderboards.reset();
       otherStates.clear();
       cloudSaves.clear();
+      localSaves.clear();
       myState = null;
       net.reset();
       Object.assign(config, defaultMockConfig());
@@ -634,7 +678,7 @@ function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 4,
+    protocolVersion: () => 5,
     localeCurrent: () => mockLocale(config),
     localeOnChange: () => () => {
     },
@@ -698,13 +742,17 @@ var INVOKERS = {
     (room) => room ? { source: roomSourceOf(room), info: describeRoom(room) } : null
   )
 };
+function fallbackOptions(p) {
+  return "fallback" in p ? { fallback: p.fallback } : {};
+}
 var CLOUD_SAVE_INVOKERS = {
-  "cloudSave.load": (api, p) => api.loadWithMetadata(p.slot),
+  "cloudSave.load": (api, p) => api.loadWithMetadata(p.slot, fallbackOptions(p)),
   "cloudSave.save": (api, p) => {
-    const options = typeof p.baseRevision === "number" ? { baseRevision: p.baseRevision } : {};
+    const options = fallbackOptions(p);
+    if (typeof p.baseRevision === "number") options.baseRevision = p.baseRevision;
     return api.save(p.payload, p.slot, options);
   },
-  "cloudSave.remove": (api, p) => api.remove(p.slot)
+  "cloudSave.remove": (api, p) => api.remove(p.slot, fallbackOptions(p))
 };
 function currentApis() {
   return {
@@ -849,7 +897,8 @@ function cloudSaveOf(raw) {
     payload: raw.payload ?? null,
     revision: number(raw.revision),
     createdAt: text(raw.createdAt),
-    updatedAt: text(raw.updatedAt)
+    updatedAt: text(raw.updatedAt),
+    storage: raw.storage === "local" ? "local" : "cloud"
   };
 }
 function shareResultOf(raw) {
@@ -1026,11 +1075,12 @@ function createRoom(source, info, onClosed) {
 }
 
 // src/sdk.js
-var VERSION = "0.3.0";
+var VERSION = "0.4.0";
 var REQUIRED_PROTOCOL_VERSION = 1;
 var PLAYER_STATE_PROTOCOL_VERSION = 2;
 var SHARE_PROTOCOL_VERSION = 3;
 var LOCALE_PROTOCOL_VERSION = 4;
+var CLOUD_SAVE_LOCAL_PROTOCOL_VERSION = 5;
 var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
 var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 var noneBackend = {
@@ -1111,15 +1161,21 @@ function createGRush(options = {}) {
     get: (pseudoIds) => statesCall("playerState.get", { pseudoIds }, listOf(playerStateOf)),
     report: (pseudoId) => statesCall("playerState.report", { pseudoId }, (raw) => raw === true)
   };
+  function withFallback(params, extra) {
+    if (extra?.fallback !== void 0 && backend().protocolVersion() >= CLOUD_SAVE_LOCAL_PROTOCOL_VERSION) {
+      params.fallback = extra.fallback;
+    }
+    return params;
+  }
   const cloudSave = {
-    load: (slot) => mapped("cloudSave.load", { slot }, orNull(cloudSaveOf), 0),
+    load: (slot, extra) => mapped("cloudSave.load", withFallback({ slot }, extra), orNull(cloudSaveOf), 0),
     save(payload, slot, rawExtra) {
       const extra = rawExtra ?? {};
       const params = { payload, slot };
       if (typeof extra.baseRevision === "number") params.baseRevision = extra.baseRevision;
-      return mapped("cloudSave.save", params, required(cloudSaveOf), 0);
+      return mapped("cloudSave.save", withFallback(params, extra), required(cloudSaveOf), 0);
     },
-    remove: (slot) => mapped("cloudSave.remove", { slot }, () => true, 0)
+    remove: (slot, extra) => mapped("cloudSave.remove", withFallback({ slot }, extra), () => true, 0)
   };
   const share = {
     share(rawOptions) {
