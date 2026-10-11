@@ -3,6 +3,8 @@ import { MANIFEST_PATH, parseLeaderboardManifest } from "./mock-manifest.js";
 import { createMockNet } from "./mock-net.js";
 import { CODES, failure, ok } from "./result.js";
 
+const MANIFEST_TIMEOUT_MS = 3000;
+
 const STORAGE_KEY = "grush-sdk-mock";
 const SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const PLAYER_STATE_MAX_BYTES = 4 * 1024;
@@ -153,21 +155,38 @@ export function createMockBackend(config) {
     ) {
       return;
     }
-    let text;
+    // A dev server that never answers would hold every leaderboard call, so a slow read counts as no
+    // file.
+    const controller = new AbortController();
+    let timer;
+    // Also raced, so a fetch that ignores the signal cannot hold the calls either.
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("grush.json took too long."));
+      }, MANIFEST_TIMEOUT_MS);
+    });
+    let bytes;
     try {
-      const response = await globalThis.fetch(new URL(MANIFEST_PATH, location.href), {
-        cache: "no-store",
-      });
+      const response = await Promise.race([
+        globalThis.fetch(new URL(MANIFEST_PATH, location.href), {
+          cache: "no-store",
+          signal: controller.signal,
+        }),
+        deadline,
+      ]);
       // A dev server that answers every path with index.html has no grush.json either.
       if (!response.ok || (response.headers?.get("content-type") ?? "").includes("text/html")) {
         return;
       }
-      text = await response.text();
+      bytes = new Uint8Array(await Promise.race([response.arrayBuffer(), deadline]));
     } catch {
       return;
+    } finally {
+      clearTimeout(timer);
     }
     if (generation !== manifestGeneration) return;
-    const parsed = parseLeaderboardManifest(text);
+    const parsed = parseLeaderboardManifest(bytes);
     if (!parsed.ok) {
       globalThis.console?.warn?.(`[GRush mock] ${parsed.error}`);
       return;

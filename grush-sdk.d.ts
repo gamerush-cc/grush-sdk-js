@@ -233,8 +233,8 @@ export interface GRushMock {
   ): void;
   /**
    * `grush.json` の中身（オブジェクトか JSON の文字列）でモックの枠を宣言し、宣言した key を返す。
-   * アップロードと同じ規則で読み、誤りは `invalidParams` で返す。これを呼ぶと、ページの隣の
-   * `grush.json` は自動では読まない。
+   * アップロードと同じ規則で読み、誤りは `invalidParams` で返す。同じ key を `defineLeaderboard` で
+   * 宣言してあっても、こちらの定義で置き換える。これを呼ぶと、ページの隣の `grush.json` は自動では読まない。
    */
   loadLeaderboards(manifest: GRushLeaderboardManifest | string): GRushResult<string[]>;
   addRival(

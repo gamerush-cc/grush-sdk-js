@@ -42,14 +42,19 @@ function createMockLeaderboards(selfIdentity, now = () => /* @__PURE__ */ new Da
   function load(entries, keepDefined) {
     const defined = [];
     for (const entry of entries) {
-      if (keepDefined && boards.has(entry.key)) continue;
+      const existing = boards.get(entry.key);
+      if (keepDefined && existing && !existing.placeholder) continue;
       create(entry.key, entry, true);
+      if (existing?.placeholder) boards.get(entry.key).entries = existing.entries;
       defined.push(entry.key);
     }
     return defined;
   }
   function ensure(key) {
-    if (!boards.has(key)) define(key);
+    if (!boards.has(key)) {
+      define(key);
+      boards.get(key).placeholder = true;
+    }
     return boards.get(key);
   }
   function addRival(key, displayName, value, options = {}) {
@@ -220,17 +225,21 @@ function invalidField(field) {
   return { ok: false, error: `${MANIFEST_PATH} has an invalid value: ${field}` };
 }
 function readSource(source) {
-  if (typeof source !== "string") return { ok: true, value: source };
-  if (new TextEncoder().encode(source).byteLength > MAX_BYTES) {
+  if (typeof source !== "string" && !(source instanceof Uint8Array)) {
+    return { ok: true, value: source };
+  }
+  const bytes = typeof source === "string" ? new TextEncoder().encode(source) : source;
+  if (bytes.byteLength > MAX_BYTES) {
     return { ok: false, error: `${MANIFEST_PATH} is too large (${MAX_BYTES / 1024}KB at most).` };
   }
   try {
-    return { ok: true, value: JSON.parse(source.replace(/^\uFEFF/, "")) };
+    const text2 = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
+    return { ok: true, value: JSON.parse(text2) };
   } catch {
     return { ok: false, error: `${MANIFEST_PATH} can't be read as a JSON object.` };
   }
 }
-function readEntry(item, at) {
+function readEntry(item, at, seen) {
   if (!isPlainObject(item)) return invalidField(at);
   for (const field of Object.keys(item)) {
     if (!ENTRY_FIELDS.has(field)) {
@@ -238,6 +247,19 @@ function readEntry(item, at) {
     }
   }
   if (typeof item.key !== "string" || !KEY_PATTERN.test(item.key)) return invalidField(`${at}.key`);
+  if (seen.has(item.key)) {
+    return {
+      ok: false,
+      error: `${MANIFEST_PATH} declares the leaderboard key more than once: ${item.key}`
+    };
+  }
+  seen.add(item.key);
+  for (const field of ["minValue", "maxValue"]) {
+    const value = item[field];
+    if (value !== void 0 && value !== null && !Number.isFinite(value)) {
+      return invalidField(`${at}.${field}`);
+    }
+  }
   const title = typeof item.title === "string" ? item.title.replace(LINE_BREAKING_OR_CONTROL, " ").trim() : "";
   if (title.length < 1 || title.length > MAX_TITLE_LENGTH) return invalidField(`${at}.title`);
   for (const [field, choices] of Object.entries(CHOICES)) {
@@ -245,12 +267,6 @@ function readEntry(item, at) {
   }
   if (item.enabled !== void 0 && typeof item.enabled !== "boolean") {
     return invalidField(`${at}.enabled`);
-  }
-  for (const field of ["minValue", "maxValue"]) {
-    const value = item[field];
-    if (value !== void 0 && value !== null && !Number.isFinite(value)) {
-      return invalidField(`${at}.${field}`);
-    }
   }
   const minValue = item.minValue ?? null;
   const maxValue = item.maxValue ?? null;
@@ -295,15 +311,8 @@ function parseLeaderboardManifest(source) {
   const leaderboards = [];
   const seen = /* @__PURE__ */ new Set();
   for (const [index, item] of list.entries()) {
-    const read2 = readEntry(item, `leaderboards[${index}]`);
+    const read2 = readEntry(item, `leaderboards[${index}]`, seen);
     if (!read2.ok) return read2;
-    if (seen.has(read2.entry.key)) {
-      return {
-        ok: false,
-        error: `${MANIFEST_PATH} declares the leaderboard key more than once: ${read2.entry.key}`
-      };
-    }
-    seen.add(read2.entry.key);
     leaderboards.push(read2.entry);
   }
   return { ok: true, leaderboards };
@@ -566,6 +575,7 @@ function messageOf(error, fallback) {
 }
 
 // src/backend-mock.js
+var MANIFEST_TIMEOUT_MS = 3e3;
 var STORAGE_KEY = "grush-sdk-mock";
 var SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 var PLAYER_STATE_MAX_BYTES = 4 * 1024;
@@ -689,20 +699,34 @@ function createMockBackend(config) {
     if (typeof globalThis.fetch !== "function" || !location?.href || location.protocol === "file:") {
       return;
     }
-    let text2;
+    const controller = new AbortController();
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("grush.json took too long."));
+      }, MANIFEST_TIMEOUT_MS);
+    });
+    let bytes;
     try {
-      const response = await globalThis.fetch(new URL(MANIFEST_PATH, location.href), {
-        cache: "no-store"
-      });
+      const response = await Promise.race([
+        globalThis.fetch(new URL(MANIFEST_PATH, location.href), {
+          cache: "no-store",
+          signal: controller.signal
+        }),
+        deadline
+      ]);
       if (!response.ok || (response.headers?.get("content-type") ?? "").includes("text/html")) {
         return;
       }
-      text2 = await response.text();
+      bytes = new Uint8Array(await Promise.race([response.arrayBuffer(), deadline]));
     } catch {
       return;
+    } finally {
+      clearTimeout(timer);
     }
     if (generation !== manifestGeneration) return;
-    const parsed = parseLeaderboardManifest(text2);
+    const parsed = parseLeaderboardManifest(bytes);
     if (!parsed.ok) {
       globalThis.console?.warn?.(`[GRush mock] ${parsed.error}`);
       return;

@@ -47,19 +47,26 @@ export function createMockLeaderboards(selfIdentity, now = () => new Date()) {
   }
 
   // Defines the boards of a parsed grush.json. With keepDefined, keys already declared with
-  // defineLeaderboard stay as they are. Returns the keys it defined.
+  // defineLeaderboard stay as they are. A board that only addRival created is a placeholder: addRival
+  // can run before grush.json is read, so the file's definition replaces it and keeps its entries.
+  // Returns the keys it defined.
   function load(entries, keepDefined) {
     const defined = [];
     for (const entry of entries) {
-      if (keepDefined && boards.has(entry.key)) continue;
+      const existing = boards.get(entry.key);
+      if (keepDefined && existing && !existing.placeholder) continue;
       create(entry.key, entry, true);
+      if (existing?.placeholder) boards.get(entry.key).entries = existing.entries;
       defined.push(entry.key);
     }
     return defined;
   }
 
   function ensure(key) {
-    if (!boards.has(key)) define(key);
+    if (!boards.has(key)) {
+      define(key);
+      boards.get(key).placeholder = true;
+    }
     return boards.get(key);
   }
 

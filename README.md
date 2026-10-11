@@ -173,8 +173,9 @@ if (GRush.backend === "mock") {
 ランキングの定義をビルドの最上位（`index.html` の隣）の `grush.json` に書いておくと、モックは最初のランキングの呼び出しの前にページと同じフォルダの `grush.json` を読み、その枠を宣言する。アップロードと手元の確認で同じファイルを使える。書式は [SDK ガイドのランキング](https://gamerush.jp/sdk#leaderboards)。
 
 - 読むのは `http://localhost` などのローカルサーバから開いたときだけ。`file://` では読まないので、`GRush.mock.loadLeaderboards(manifest)` に中身（オブジェクトか JSON の文字列）を渡す
-- ファイルが無ければ何もしない。書式の誤りはアップロードと同じ文言でコンソールに警告し、その中身は使わない。`loadLeaderboards` は誤りを `invalidParams` で返す
-- 同じ key を `defineLeaderboard` で宣言してあれば、自動で読んだ `grush.json` よりそちらを使う。`loadLeaderboards` を呼んだら、自動では読まない
+- ファイルが無いときと、3 秒以内に読めないときは何もしない。書式の誤りはアップロードと同じ文言でコンソールに警告し、その中身は使わない。`loadLeaderboards` は誤りを `invalidParams` で返す
+- 自動で読むときは、同じ key を `defineLeaderboard` で宣言してあればそちらを使う。`loadLeaderboards` に渡した定義は、`defineLeaderboard` の宣言を置き換える。`loadLeaderboards` を呼んだら、自動では読まない
+- 先に `addRival` で足した相手は、`grush.json` の定義の枠へ引き継ぐ
 - `enabled: false` の枠は一覧に出ず、投稿と取得は宣言していない key と同じく `invalidParams` になる。`minValue` / `maxValue` の無い枠は、GameRush と同じく投稿を受けない
 - `period` が `daily` / `weekly` / `monthly` の枠は、GameRush と同じ期間キー（UTC）を返し、期間が変わると空からやり直す
 - `reset()` の後は、次のランキングの呼び出しで `grush.json` を読み直す
