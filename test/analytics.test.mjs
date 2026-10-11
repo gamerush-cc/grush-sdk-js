@@ -230,11 +230,27 @@ test("the mock rejects what GameRush rejects and says why", () => {
     ],
   ];
   for (const [reason, log] of cases) {
+    // reset() lets each reason warn again, so every case shows its own reason.
+    sdk.mock.reset();
     printed.warn.length = 0;
     assert.equal(log(), false, reason);
     assert.deepEqual(printed.warn, [`[GRush mock] analytics event rejected (${reason}).`]);
   }
   assert.deepEqual(sdk.mock.analyticsEvents(), []);
+});
+
+test("the mock warns once per reason like GameRush", () => {
+  useMock();
+  assert.equal(sdk.analytics.logOnboardingStep(0), false);
+  assert.equal(sdk.analytics.logOnboardingStep(101), false);
+  assert.equal(sdk.analytics.logCustomEvent("has space"), false);
+  assert.deepEqual(printed.warn, [
+    "[GRush mock] analytics event rejected (step).",
+    "[GRush mock] analytics event rejected (name).",
+  ]);
+  sdk.mock.reset();
+  assert.equal(sdk.analytics.logOnboardingStep(0), false);
+  assert.equal(printed.warn.length, 3);
 });
 
 test("the mock counts code points and keeps text on one line like GameRush", () => {

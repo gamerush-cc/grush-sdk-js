@@ -788,6 +788,7 @@ function createMockBackend(config) {
   const cloudSaves = /* @__PURE__ */ new Map();
   const localSaves = /* @__PURE__ */ new Map();
   let analyticsEvents = [];
+  const analyticsWarned = /* @__PURE__ */ new Set();
   let myState = null;
   const consented = () => config.signedIn && readStored().consent === true;
   function playerWire() {
@@ -969,7 +970,10 @@ function createMockBackend(config) {
   function logAnalytics(kind, params) {
     const result = sanitizeAnalyticsEvent({ ...params, kind });
     if (!result.ok) {
-      globalThis.console?.warn?.(`[GRush mock] analytics event rejected (${result.reason}).`);
+      if (!analyticsWarned.has(result.reason)) {
+        analyticsWarned.add(result.reason);
+        globalThis.console?.warn?.(`[GRush mock] analytics event rejected (${result.reason}).`);
+      }
       return false;
     }
     analyticsEvents.push(result.event);
@@ -1043,6 +1047,7 @@ function createMockBackend(config) {
       cloudSaves.clear();
       localSaves.clear();
       analyticsEvents = [];
+      analyticsWarned.clear();
       myState = null;
       net.reset();
       Object.assign(config, defaultMockConfig());

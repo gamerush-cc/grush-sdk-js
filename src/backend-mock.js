@@ -116,6 +116,7 @@ export function createMockBackend(config) {
   const cloudSaves = new Map();
   const localSaves = new Map();
   let analyticsEvents = [];
+  const analyticsWarned = new Set();
   let myState = null;
 
   const consented = () => config.signedIn && readStored().consent === true;
@@ -325,10 +326,14 @@ export function createMockBackend(config) {
   }
 
   // Checks the event the way GameRush does, prints it and keeps the most recent ones. Nothing is sent.
+  // Like GameRush, a rejection is warned about once per reason.
   function logAnalytics(kind, params) {
     const result = sanitizeAnalyticsEvent({ ...params, kind });
     if (!result.ok) {
-      globalThis.console?.warn?.(`[GRush mock] analytics event rejected (${result.reason}).`);
+      if (!analyticsWarned.has(result.reason)) {
+        analyticsWarned.add(result.reason);
+        globalThis.console?.warn?.(`[GRush mock] analytics event rejected (${result.reason}).`);
+      }
       return false;
     }
     analyticsEvents.push(result.event);
@@ -408,6 +413,7 @@ export function createMockBackend(config) {
       cloudSaves.clear();
       localSaves.clear();
       analyticsEvents = [];
+      analyticsWarned.clear();
       myState = null;
       net.reset();
       Object.assign(config, defaultMockConfig());
