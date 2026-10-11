@@ -54,7 +54,29 @@ async function useSdk(): Promise<void> {
   // @ts-expect-error fallback takes only "local".
   await GRush.cloudSave.load("default", { fallback: "cloud" });
 
+  if (GRush.analytics.isAvailable()) {
+    const logged: boolean = GRush.analytics.logOnboardingStep(1, "tutorial", {
+      fields: { route: "a" },
+    });
+    void logged;
+  }
+  GRush.analytics.logFunnelStep("shop", null, 2, "open");
+  GRush.analytics.logCustomEvent("boss_defeated");
+  GRush.analytics.logCustomEvent("coins", 3, { fields: { stage: "1" } });
+  GRush.analytics.logEconomyEvent("sink", "coin", 50, 120, "Shop", { itemSku: "sword" });
+  GRush.analytics.logEconomyEvent("source", "gem", 1, 1, "daily_bonus");
+  // @ts-expect-error flowType takes only "source" or "sink".
+  GRush.analytics.logEconomyEvent("spend", "coin", 1, 0, "Shop");
+  // @ts-expect-error field values are strings.
+  GRush.analytics.logCustomEvent("x", 1, { fields: { level: 3 } });
+
   const local = createGRush({ backend: "mock" });
+  for (const event of local.mock.analyticsEvents()) {
+    if (event.kind === "economy") {
+      const balance: number = event.endingBalance;
+      void balance;
+    }
+  }
   local.mock.config.shareStatus = "cancelled";
   local.mock.defineLeaderboard("score", { sort: "asc", minValue: 0 });
   local.mock.defineLeaderboard("daily", { period: "daily", enabled: false });

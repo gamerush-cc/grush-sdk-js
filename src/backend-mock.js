@@ -1,9 +1,12 @@
+import { sanitizeAnalyticsEvent } from "./analytics-rules.js";
 import { createMockLeaderboards } from "./mock-leaderboards.js";
 import { MANIFEST_PATH, parseLeaderboardManifest } from "./mock-manifest.js";
 import { createMockNet } from "./mock-net.js";
 import { CODES, failure, ok } from "./result.js";
 
 const MANIFEST_TIMEOUT_MS = 3000;
+// How many analytics events mock.analyticsEvents() keeps, newest last.
+export const MOCK_ANALYTICS_MAX_EVENTS = 200;
 
 const STORAGE_KEY = "grush-sdk-mock";
 const SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -112,6 +115,7 @@ export function createMockBackend(config) {
   const otherStates = new Map();
   const cloudSaves = new Map();
   const localSaves = new Map();
+  let analyticsEvents = [];
   let myState = null;
 
   const consented = () => config.signedIn && readStored().consent === true;
@@ -320,6 +324,21 @@ export function createMockBackend(config) {
     return ok(true);
   }
 
+  // Checks the event the way GameRush does, prints it and keeps the most recent ones. Nothing is sent.
+  function logAnalytics(kind, params) {
+    const result = sanitizeAnalyticsEvent({ ...params, kind });
+    if (!result.ok) {
+      globalThis.console?.warn?.(`[GRush mock] analytics event rejected (${result.reason}).`);
+      return false;
+    }
+    analyticsEvents.push(result.event);
+    if (analyticsEvents.length > MOCK_ANALYTICS_MAX_EVENTS) {
+      analyticsEvents = analyticsEvents.slice(-MOCK_ANALYTICS_MAX_EVENTS);
+    }
+    globalThis.console?.info?.(`[GRush mock] analytics ${JSON.stringify(result.event)}`);
+    return true;
+  }
+
   function fromBoard(outcome, pick) {
     return outcome.error ? invalid(outcome.error) : ok(pick(outcome));
   }
@@ -380,6 +399,7 @@ export function createMockBackend(config) {
     },
     addPeer: (displayName, avatarUrl) => net.addPeer(displayName, avatarUrl),
     removePeer: (peer) => net.removePeer(peer),
+    analyticsEvents: () => structuredClone(analyticsEvents),
     reset() {
       leaderboards.reset();
       manifestGeneration += 1;
@@ -387,6 +407,7 @@ export function createMockBackend(config) {
       otherStates.clear();
       cloudSaves.clear();
       localSaves.clear();
+      analyticsEvents = [];
       myState = null;
       net.reset();
       Object.assign(config, defaultMockConfig());
@@ -398,9 +419,11 @@ export function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 5,
+    protocolVersion: () => 6,
     localeCurrent: () => mockLocale(config),
     localeOnChange: () => () => {},
+    analyticsAvailable: () => true,
+    logAnalytics,
     async call(method, params = {}) {
       const handler = handlers[method];
       if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);

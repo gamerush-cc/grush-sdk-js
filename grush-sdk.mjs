@@ -1,4 +1,121 @@
-/*! GameRush SDK for JavaScript v0.5.0 */
+/*! GameRush SDK for JavaScript v0.6.0 */
+
+// src/analytics-rules.js
+var ANALYTICS_EVENT_KINDS = ["onboarding", "funnel", "custom", "economy"];
+var ANALYTICS_ECONOMY_FLOWS = ["source", "sink"];
+var ANALYTICS_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
+var ANALYTICS_SHORT_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,32}$/;
+var ANALYTICS_FIELD_KEY_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
+var ANALYTICS_MAX_FIELDS = 3;
+var ANALYTICS_MAX_TEXT_CODE_POINTS = 40;
+var ANALYTICS_MIN_STEP = 1;
+var ANALYTICS_MAX_STEP = 100;
+var ANALYTICS_DEFAULT_CUSTOM_VALUE = 1;
+var ANALYTICS_MAX_ABS_CUSTOM_VALUE = 1e9;
+var ANALYTICS_MAX_AMOUNT = 1e12;
+var ANALYTICS_MAX_ABS_ENDING_BALANCE = 1e15;
+var LINE_BREAKING_OR_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}\u202A-\u202E\u2066-\u2069]+/gu;
+var VISIBLY_BLANK = /^[\s\p{Z}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u115F\u1160\u3164\uFFA0\u2800]*$/u;
+var LONE_SURROGATE = /\p{Cs}/u;
+function reject(reason) {
+  return { ok: false, reason };
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isKey(value, pattern) {
+  return typeof value === "string" && pattern.test(value);
+}
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+function lineText(value) {
+  if (typeof value !== "string") return null;
+  const text2 = value.replace(LINE_BREAKING_OR_CONTROL, " ").trim();
+  if (LONE_SURROGATE.test(text2)) return null;
+  if ([...text2].length > ANALYTICS_MAX_TEXT_CODE_POINTS) return null;
+  return VISIBLY_BLANK.test(text2) ? "" : text2;
+}
+function optionalText(value) {
+  if (value === void 0 || value === null) return { ok: true, value: void 0 };
+  const text2 = lineText(value);
+  if (text2 === null) return reject("text");
+  return { ok: true, value: text2 === "" ? void 0 : text2 };
+}
+function sanitizeFields(value) {
+  if (value === void 0 || value === null) return { ok: true, value: void 0 };
+  if (!isRecord(value)) return reject("fields");
+  const entries = Object.entries(value);
+  if (entries.length > ANALYTICS_MAX_FIELDS) return reject("fields");
+  const normalized = [];
+  for (const [key, raw] of entries) {
+    const text2 = lineText(raw);
+    if (!ANALYTICS_FIELD_KEY_PATTERN.test(key) || !text2) return reject("fields");
+    normalized.push([key, text2]);
+  }
+  if (normalized.length === 0) return { ok: true, value: void 0 };
+  return { ok: true, value: Object.fromEntries(normalized) };
+}
+function isStep(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= ANALYTICS_MIN_STEP && value <= ANALYTICS_MAX_STEP;
+}
+function sanitizeStep(data, fields) {
+  if (!isStep(data.step)) return reject("step");
+  const stepName = optionalText(data.stepName);
+  if (!stepName.ok) return stepName;
+  let event;
+  if (data.kind === "onboarding") {
+    event = { kind: "onboarding", step: data.step };
+  } else {
+    if (!isKey(data.funnel, ANALYTICS_KEY_PATTERN)) return reject("name");
+    event = { kind: "funnel", funnel: data.funnel, step: data.step };
+    const funnelSessionId = data.funnelSessionId;
+    if (funnelSessionId !== void 0 && funnelSessionId !== null && funnelSessionId !== "") {
+      if (!isKey(funnelSessionId, ANALYTICS_KEY_PATTERN)) return reject("name");
+      event.funnelSessionId = funnelSessionId;
+    }
+  }
+  if (stepName.value !== void 0) event.stepName = stepName.value;
+  if (fields !== void 0) event.fields = fields;
+  return { ok: true, event };
+}
+function sanitizeCustom(data, fields) {
+  if (!isKey(data.name, ANALYTICS_KEY_PATTERN)) return reject("name");
+  const value = data.value === void 0 ? ANALYTICS_DEFAULT_CUSTOM_VALUE : data.value;
+  if (!isFiniteNumber(value) || Math.abs(value) > ANALYTICS_MAX_ABS_CUSTOM_VALUE) {
+    return reject("value");
+  }
+  const event = { kind: "custom", name: data.name, value };
+  if (fields !== void 0) event.fields = fields;
+  return { ok: true, event };
+}
+function sanitizeEconomy(data, fields) {
+  const { flowType, currency, amount, endingBalance, transactionType } = data;
+  if (!ANALYTICS_ECONOMY_FLOWS.includes(flowType)) return reject("flowType");
+  if (!isKey(currency, ANALYTICS_SHORT_KEY_PATTERN)) return reject("currency");
+  if (!isFiniteNumber(amount) || amount <= 0 || amount > ANALYTICS_MAX_AMOUNT) {
+    return reject("amount");
+  }
+  if (!isFiniteNumber(endingBalance) || Math.abs(endingBalance) > ANALYTICS_MAX_ABS_ENDING_BALANCE) {
+    return reject("endingBalance");
+  }
+  if (!isKey(transactionType, ANALYTICS_SHORT_KEY_PATTERN)) return reject("transactionType");
+  const itemSku = optionalText(data.itemSku);
+  if (!itemSku.ok) return itemSku;
+  const event = { kind: "economy", flowType, currency, amount, endingBalance, transactionType };
+  if (itemSku.value !== void 0) event.itemSku = itemSku.value;
+  if (fields !== void 0) event.fields = fields;
+  return { ok: true, event };
+}
+function sanitizeAnalyticsEvent(raw) {
+  if (!isRecord(raw)) return reject("shape");
+  if (!ANALYTICS_EVENT_KINDS.includes(raw.kind)) return reject("kind");
+  const fields = sanitizeFields(raw.fields);
+  if (!fields.ok) return fields;
+  if (raw.kind === "onboarding" || raw.kind === "funnel") return sanitizeStep(raw, fields.value);
+  if (raw.kind === "custom") return sanitizeCustom(raw, fields.value);
+  return sanitizeEconomy(raw, fields.value);
+}
 
 // src/mock-leaderboards.js
 var PERIODS = /* @__PURE__ */ new Set(["all_time", "daily", "weekly", "monthly"]);
@@ -199,7 +316,7 @@ var MAX_BYTES = 64 * 1024;
 var MAX_LEADERBOARDS = 20;
 var MAX_TITLE_LENGTH = 60;
 var KEY_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
-var LINE_BREAKING_OR_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}\u202A-\u202E\u2066-\u2069]+/gu;
+var LINE_BREAKING_OR_CONTROL2 = /[\p{Cc}\p{Zl}\p{Zp}\u202A-\u202E\u2066-\u2069]+/gu;
 var TOP_LEVEL_FIELDS = /* @__PURE__ */ new Set(["$schema", "leaderboards"]);
 var ENTRY_FIELDS = /* @__PURE__ */ new Set([
   "key",
@@ -260,7 +377,7 @@ function readEntry(item, at, seen) {
       return invalidField(`${at}.${field}`);
     }
   }
-  const title = typeof item.title === "string" ? item.title.replace(LINE_BREAKING_OR_CONTROL, " ").trim() : "";
+  const title = typeof item.title === "string" ? item.title.replace(LINE_BREAKING_OR_CONTROL2, " ").trim() : "";
   if (title.length < 1 || title.length > MAX_TITLE_LENGTH) return invalidField(`${at}.title`);
   for (const [field, choices] of Object.entries(CHOICES)) {
     if (!choices.includes(item[field])) return invalidField(`${at}.${field}`);
@@ -576,6 +693,7 @@ function messageOf(error, fallback) {
 
 // src/backend-mock.js
 var MANIFEST_TIMEOUT_MS = 3e3;
+var MOCK_ANALYTICS_MAX_EVENTS = 200;
 var STORAGE_KEY = "grush-sdk-mock";
 var SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 var PLAYER_STATE_MAX_BYTES = 4 * 1024;
@@ -669,6 +787,7 @@ function createMockBackend(config) {
   const otherStates = /* @__PURE__ */ new Map();
   const cloudSaves = /* @__PURE__ */ new Map();
   const localSaves = /* @__PURE__ */ new Map();
+  let analyticsEvents = [];
   let myState = null;
   const consented = () => config.signedIn && readStored().consent === true;
   function playerWire() {
@@ -701,10 +820,10 @@ function createMockBackend(config) {
     }
     const controller = new AbortController();
     let timer;
-    const deadline = new Promise((_, reject) => {
+    const deadline = new Promise((_, reject2) => {
       timer = setTimeout(() => {
         controller.abort();
-        reject(new Error("grush.json took too long."));
+        reject2(new Error("grush.json took too long."));
       }, MANIFEST_TIMEOUT_MS);
     });
     let bytes;
@@ -847,6 +966,19 @@ function createMockBackend(config) {
     if (mode.local) localSaves.delete(key);
     return ok(true);
   }
+  function logAnalytics(kind, params) {
+    const result = sanitizeAnalyticsEvent({ ...params, kind });
+    if (!result.ok) {
+      globalThis.console?.warn?.(`[GRush mock] analytics event rejected (${result.reason}).`);
+      return false;
+    }
+    analyticsEvents.push(result.event);
+    if (analyticsEvents.length > MOCK_ANALYTICS_MAX_EVENTS) {
+      analyticsEvents = analyticsEvents.slice(-MOCK_ANALYTICS_MAX_EVENTS);
+    }
+    globalThis.console?.info?.(`[GRush mock] analytics ${JSON.stringify(result.event)}`);
+    return true;
+  }
   function fromBoard(outcome, pick) {
     return outcome.error ? invalid(outcome.error) : ok(pick(outcome));
   }
@@ -902,6 +1034,7 @@ function createMockBackend(config) {
     },
     addPeer: (displayName, avatarUrl) => net.addPeer(displayName, avatarUrl),
     removePeer: (peer) => net.removePeer(peer),
+    analyticsEvents: () => structuredClone(analyticsEvents),
     reset() {
       leaderboards.reset();
       manifestGeneration += 1;
@@ -909,6 +1042,7 @@ function createMockBackend(config) {
       otherStates.clear();
       cloudSaves.clear();
       localSaves.clear();
+      analyticsEvents = [];
       myState = null;
       net.reset();
       Object.assign(config, defaultMockConfig());
@@ -919,10 +1053,12 @@ function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 5,
+    protocolVersion: () => 6,
     localeCurrent: () => mockLocale(config),
     localeOnChange: () => () => {
     },
+    analyticsAvailable: () => true,
+    logAnalytics,
     async call(method, params = {}) {
       const handler = handlers[method];
       if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);
@@ -1029,6 +1165,8 @@ function createWebBackend() {
       return typeof unsubscribe === "function" ? unsubscribe : () => {
       };
     },
+    analyticsAvailable: () => runtimeApi("Analytics")?.isAvailable?.() === true,
+    logAnalytics: (kind, params) => runtimeApi("Analytics")?.log?.(kind, params) === true,
     async call(method, params = {}) {
       if (method in CLOUD_SAVE_INVOKERS) return callCloudSave(method, params);
       const invoke = INVOKERS[method];
@@ -1317,12 +1455,13 @@ function createRoom(source, info, onClosed) {
 }
 
 // src/sdk.js
-var VERSION = "0.5.0";
+var VERSION = "0.6.0";
 var REQUIRED_PROTOCOL_VERSION = 1;
 var PLAYER_STATE_PROTOCOL_VERSION = 2;
 var SHARE_PROTOCOL_VERSION = 3;
 var LOCALE_PROTOCOL_VERSION = 4;
 var CLOUD_SAVE_LOCAL_PROTOCOL_VERSION = 5;
+var ANALYTICS_PROTOCOL_VERSION = 6;
 var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
 var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 var noneBackend = {
@@ -1464,6 +1603,48 @@ function createGRush(options = {}) {
       });
     }
   };
+  function analyticsBackend() {
+    const active = backend();
+    if (!active.isAvailable() || active.protocolVersion() < ANALYTICS_PROTOCOL_VERSION) return null;
+    return active;
+  }
+  function logAnalytics(kind, build) {
+    try {
+      const active = analyticsBackend();
+      if (!active?.logAnalytics) return false;
+      return active.logAnalytics(kind, build()) === true;
+    } catch {
+      return false;
+    }
+  }
+  const fieldsOf = (options2) => options2?.fields;
+  const analytics = {
+    logOnboardingStep: (step, stepName, options2) => logAnalytics("onboarding", () => ({ step, stepName, fields: fieldsOf(options2) })),
+    logFunnelStep: (funnel, funnelSessionId, step, stepName, options2) => logAnalytics("funnel", () => ({
+      funnel,
+      funnelSessionId,
+      step,
+      stepName,
+      fields: fieldsOf(options2)
+    })),
+    logCustomEvent: (name, value, options2) => logAnalytics("custom", () => ({ name, value, fields: fieldsOf(options2) })),
+    logEconomyEvent: (flowType, currency, amount, endingBalance, transactionType, options2) => logAnalytics("economy", () => ({
+      flowType,
+      currency,
+      amount,
+      endingBalance,
+      transactionType,
+      itemSku: options2?.itemSku,
+      fields: fieldsOf(options2)
+    })),
+    isAvailable() {
+      try {
+        return analyticsBackend()?.analyticsAvailable?.() === true;
+      } catch {
+        return false;
+      }
+    }
+  };
   const net = {
     async join(rawOptions) {
       const opts = rawOptions ?? {};
@@ -1518,6 +1699,7 @@ function createGRush(options = {}) {
     cloudSave,
     share,
     locale,
+    analytics,
     net,
     mock: mockBackend.controls
   };
