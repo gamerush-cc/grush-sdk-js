@@ -1,23 +1,61 @@
+const PERIODS = new Set(["all_time", "daily", "weekly", "monthly"]);
+
 function clamp(value, fallback, max) {
   return typeof value === "number" && value > 0 ? Math.min(Math.floor(value), max) : fallback;
 }
 
-export function createMockLeaderboards(selfIdentity) {
+// The same period keys GameRush uses (UTC). When the key changes, the board starts over like a new
+// period on the server.
+function periodKeyOf(period, at) {
+  if (period === "daily") return at.toISOString().slice(0, 10);
+  if (period === "monthly") return at.toISOString().slice(0, 7);
+  if (period !== "weekly") return "";
+  const date = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+  const day = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+export function createMockLeaderboards(selfIdentity, now = () => new Date()) {
   const boards = new Map();
   let rivalCount = 0;
 
-  function define(key, options = {}) {
+  // requireRange is set for boards read from grush.json: GameRush accepts no score on a board without
+  // minValue / maxValue. defineLeaderboard keeps accepting any value when no range is given.
+  function create(key, options, requireRange) {
+    const period = PERIODS.has(options.period) ? options.period : "all_time";
     boards.set(key, {
       key,
       title: options.title || key,
       sort: options.sort === "asc" ? "asc" : "desc",
       valueType: options.valueType ?? "int",
       aggregation: options.aggregation ?? "best",
-      period: "all_time",
+      period,
       minValue: options.minValue ?? null,
       maxValue: options.maxValue ?? null,
+      enabled: options.enabled !== false,
+      requireRange,
+      periodKey: periodKeyOf(period, now()),
       entries: [],
     });
+  }
+
+  function define(key, options = {}) {
+    create(key, options, false);
+  }
+
+  // Defines the boards of a parsed grush.json. With keepDefined, keys already declared with
+  // defineLeaderboard stay as they are. Returns the keys it defined.
+  function load(entries, keepDefined) {
+    const defined = [];
+    for (const entry of entries) {
+      if (keepDefined && boards.has(entry.key)) continue;
+      create(entry.key, entry, true);
+      defined.push(entry.key);
+    }
+    return defined;
   }
 
   function ensure(key) {
@@ -28,7 +66,7 @@ export function createMockLeaderboards(selfIdentity) {
   function addRival(key, displayName, value, options = {}) {
     const isGuest = options.isGuest === true;
     rivalCount += 1;
-    ensure(key).entries.push({
+    current(ensure(key)).entries.push({
       pseudoId: `mock-rival-${rivalCount}`,
       displayName: isGuest ? null : displayName,
       avatarUrl: isGuest ? null : (options.avatarUrl ?? null),
@@ -44,14 +82,40 @@ export function createMockLeaderboards(selfIdentity) {
     return [...board.entries].sort((a, b) => (a.value - b.value) * direction);
   }
 
-  function list() {
-    return [...boards.values()].map(({ entries: _entries, ...definition }) => definition);
+  function current(board) {
+    const key = periodKeyOf(board.period, now());
+    if (key !== board.periodKey) {
+      board.periodKey = key;
+      board.entries = [];
+    }
+    return board;
   }
 
-  function unknown(key) {
-    return {
-      error: `No mock leaderboard named ${key}. Declare it with GRush.mock.defineLeaderboard.`,
-    };
+  function list() {
+    return [...boards.values()]
+      .filter((board) => board.enabled)
+      .map((board) => ({
+        key: board.key,
+        title: board.title,
+        sort: board.sort,
+        valueType: board.valueType,
+        aggregation: board.aggregation,
+        period: board.period,
+        minValue: board.minValue,
+        maxValue: board.maxValue,
+      }));
+  }
+
+  // GameRush answers an undeclared key and a disabled board the same way.
+  function playable(key) {
+    const board = boards.get(key);
+    if (!board) {
+      return {
+        error: `No mock leaderboard named ${key}. Declare it in grush.json or with GRush.mock.defineLeaderboard.`,
+      };
+    }
+    if (!board.enabled) return { error: `The mock leaderboard ${key} is disabled.` };
+    return { board: current(board) };
   }
 
   function nextValue(board, current, value) {
@@ -62,8 +126,12 @@ export function createMockLeaderboards(selfIdentity) {
   }
 
   function submit(key, value, metadata) {
-    const board = boards.get(key);
-    if (!board) return unknown(key);
+    const found = playable(key);
+    if (found.error) return found;
+    const { board } = found;
+    if (board.requireRange && board.minValue === null) {
+      return { error: "This leaderboard declares no minValue / maxValue, so it accepts no score." };
+    }
     if (typeof value !== "number" || !Number.isFinite(value)) {
       return { error: "Score must be a finite number." };
     }
@@ -101,7 +169,7 @@ export function createMockLeaderboards(selfIdentity) {
       sort: board.sort,
       valueType: board.valueType,
       period: board.period,
-      periodKey: "",
+      periodKey: board.periodKey,
       verified: false,
       total,
       entries: entries.map((stored, index) => {
@@ -122,8 +190,9 @@ export function createMockLeaderboards(selfIdentity) {
   }
 
   function page(key, options = {}, aroundMe = false) {
-    const board = boards.get(key);
-    if (!board) return unknown(key);
+    const found = playable(key);
+    if (found.error) return found;
+    const { board } = found;
     const rows = ranked(board);
     if (!aroundMe) {
       const start = Math.max(0, options.offset ?? 0);
@@ -139,5 +208,5 @@ export function createMockLeaderboards(selfIdentity) {
     };
   }
 
-  return { define, addRival, list, submit, page, reset: () => boards.clear() };
+  return { define, load, addRival, list, submit, page, reset: () => boards.clear() };
 }

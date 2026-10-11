@@ -1,4 +1,5 @@
 import { createMockLeaderboards } from "./mock-leaderboards.js";
+import { MANIFEST_PATH, parseLeaderboardManifest } from "./mock-manifest.js";
 import { createMockNet } from "./mock-net.js";
 import { CODES, failure, ok } from "./result.js";
 
@@ -136,6 +137,56 @@ export function createMockBackend(config) {
     const { index: _index, ...identity } = localPeerWire(-1);
     return { ...identity, isGuest: !config.signedIn };
   });
+
+  // grush.json next to the page is read once, before the first leaderboard call. loadLeaderboards and
+  // reset bump the generation so a read still in flight does not apply over them.
+  let manifestRead = null;
+  let manifestGeneration = 0;
+
+  async function readManifestFile(generation) {
+    const location = globalThis.location;
+    // fetch cannot read file:// pages, and the browser would log the refusal as an error.
+    if (
+      typeof globalThis.fetch !== "function" ||
+      !location?.href ||
+      location.protocol === "file:"
+    ) {
+      return;
+    }
+    let text;
+    try {
+      const response = await globalThis.fetch(new URL(MANIFEST_PATH, location.href), {
+        cache: "no-store",
+      });
+      // A dev server that answers every path with index.html has no grush.json either.
+      if (!response.ok || (response.headers?.get("content-type") ?? "").includes("text/html")) {
+        return;
+      }
+      text = await response.text();
+    } catch {
+      return;
+    }
+    if (generation !== manifestGeneration) return;
+    const parsed = parseLeaderboardManifest(text);
+    if (!parsed.ok) {
+      globalThis.console?.warn?.(`[GRush mock] ${parsed.error}`);
+      return;
+    }
+    leaderboards.load(parsed.leaderboards, true);
+  }
+
+  function manifestReady() {
+    manifestRead ??= readManifestFile(manifestGeneration);
+    return manifestRead;
+  }
+
+  function loadLeaderboards(manifest) {
+    manifestGeneration += 1;
+    manifestRead = Promise.resolve();
+    const parsed = parseLeaderboardManifest(manifest);
+    if (!parsed.ok) return invalid(parsed.error);
+    return ok(leaderboards.load(parsed.leaderboards, false));
+  }
 
   function requestProfile() {
     if (!config.signedIn) {
@@ -296,6 +347,7 @@ export function createMockBackend(config) {
   const controls = {
     config,
     defineLeaderboard: (key, options) => leaderboards.define(key, options),
+    loadLeaderboards,
     addRival: (key, displayName, value, options) =>
       leaderboards.addRival(key, displayName, value, options),
     definePlayerState(pseudoId, payload, options = {}) {
@@ -311,6 +363,8 @@ export function createMockBackend(config) {
     removePeer: (peer) => net.removePeer(peer),
     reset() {
       leaderboards.reset();
+      manifestGeneration += 1;
+      manifestRead = null;
       otherStates.clear();
       cloudSaves.clear();
       localSaves.clear();
@@ -331,6 +385,7 @@ export function createMockBackend(config) {
     async call(method, params = {}) {
       const handler = handlers[method];
       if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);
+      if (method.startsWith("leaderboard.")) await manifestReady();
       await new Promise((resolve) => setTimeout(resolve, 0));
       try {
         return snapshot(handler(params ?? {}));

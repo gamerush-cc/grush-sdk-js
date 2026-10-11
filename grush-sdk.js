@@ -1,25 +1,53 @@
-/*! GameRush SDK for JavaScript v0.4.0 */
+/*! GameRush SDK for JavaScript v0.5.0 */
 "use strict";
 (() => {
   // src/mock-leaderboards.js
+  var PERIODS = /* @__PURE__ */ new Set(["all_time", "daily", "weekly", "monthly"]);
   function clamp(value, fallback, max) {
     return typeof value === "number" && value > 0 ? Math.min(Math.floor(value), max) : fallback;
   }
-  function createMockLeaderboards(selfIdentity) {
+  function periodKeyOf(period, at) {
+    if (period === "daily") return at.toISOString().slice(0, 10);
+    if (period === "monthly") return at.toISOString().slice(0, 7);
+    if (period !== "weekly") return "";
+    const date = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+    const day = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
+    date.setUTCDate(date.getUTCDate() + 4 - day);
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+    const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 864e5 + 1) / 7);
+    return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  }
+  function createMockLeaderboards(selfIdentity, now = () => /* @__PURE__ */ new Date()) {
     const boards = /* @__PURE__ */ new Map();
     let rivalCount = 0;
-    function define(key, options = {}) {
+    function create(key, options, requireRange) {
+      const period = PERIODS.has(options.period) ? options.period : "all_time";
       boards.set(key, {
         key,
         title: options.title || key,
         sort: options.sort === "asc" ? "asc" : "desc",
         valueType: options.valueType ?? "int",
         aggregation: options.aggregation ?? "best",
-        period: "all_time",
+        period,
         minValue: options.minValue ?? null,
         maxValue: options.maxValue ?? null,
+        enabled: options.enabled !== false,
+        requireRange,
+        periodKey: periodKeyOf(period, now()),
         entries: []
       });
+    }
+    function define(key, options = {}) {
+      create(key, options, false);
+    }
+    function load(entries, keepDefined) {
+      const defined = [];
+      for (const entry of entries) {
+        if (keepDefined && boards.has(entry.key)) continue;
+        create(entry.key, entry, true);
+        defined.push(entry.key);
+      }
+      return defined;
     }
     function ensure(key) {
       if (!boards.has(key)) define(key);
@@ -28,7 +56,7 @@
     function addRival(key, displayName, value, options = {}) {
       const isGuest = options.isGuest === true;
       rivalCount += 1;
-      ensure(key).entries.push({
+      current(ensure(key)).entries.push({
         pseudoId: `mock-rival-${rivalCount}`,
         displayName: isGuest ? null : displayName,
         avatarUrl: isGuest ? null : options.avatarUrl ?? null,
@@ -42,23 +70,49 @@
       const direction = board.sort === "asc" ? 1 : -1;
       return [...board.entries].sort((a, b) => (a.value - b.value) * direction);
     }
+    function current(board) {
+      const key = periodKeyOf(board.period, now());
+      if (key !== board.periodKey) {
+        board.periodKey = key;
+        board.entries = [];
+      }
+      return board;
+    }
     function list() {
-      return [...boards.values()].map(({ entries: _entries, ...definition }) => definition);
+      return [...boards.values()].filter((board) => board.enabled).map((board) => ({
+        key: board.key,
+        title: board.title,
+        sort: board.sort,
+        valueType: board.valueType,
+        aggregation: board.aggregation,
+        period: board.period,
+        minValue: board.minValue,
+        maxValue: board.maxValue
+      }));
     }
-    function unknown(key) {
-      return {
-        error: `No mock leaderboard named ${key}. Declare it with GRush.mock.defineLeaderboard.`
-      };
+    function playable(key) {
+      const board = boards.get(key);
+      if (!board) {
+        return {
+          error: `No mock leaderboard named ${key}. Declare it in grush.json or with GRush.mock.defineLeaderboard.`
+        };
+      }
+      if (!board.enabled) return { error: `The mock leaderboard ${key} is disabled.` };
+      return { board: current(board) };
     }
-    function nextValue(board, current, value) {
-      if (board.aggregation === "sum") return current + value;
+    function nextValue(board, current2, value) {
+      if (board.aggregation === "sum") return current2 + value;
       if (board.aggregation === "last") return value;
-      const better = board.sort === "asc" ? value < current : value > current;
-      return better ? value : current;
+      const better = board.sort === "asc" ? value < current2 : value > current2;
+      return better ? value : current2;
     }
     function submit(key, value, metadata) {
-      const board = boards.get(key);
-      if (!board) return unknown(key);
+      const found = playable(key);
+      if (found.error) return found;
+      const { board } = found;
+      if (board.requireRange && board.minValue === null) {
+        return { error: "This leaderboard declares no minValue / maxValue, so it accepts no score." };
+      }
       if (typeof value !== "number" || !Number.isFinite(value)) {
         return { error: "Score must be a finite number." };
       }
@@ -95,7 +149,7 @@
         sort: board.sort,
         valueType: board.valueType,
         period: board.period,
-        periodKey: "",
+        periodKey: board.periodKey,
         verified: false,
         total,
         entries: entries.map((stored, index) => {
@@ -115,8 +169,9 @@
       };
     }
     function page(key, options = {}, aroundMe = false) {
-      const board = boards.get(key);
-      if (!board) return unknown(key);
+      const found = playable(key);
+      if (found.error) return found;
+      const { board } = found;
       const rows = ranked(board);
       if (!aroundMe) {
         const start2 = Math.max(0, options.offset ?? 0);
@@ -131,7 +186,128 @@
         page: pageWire(board, rows.slice(start, selfIndex + range + 1), start, rows.length)
       };
     }
-    return { define, addRival, list, submit, page, reset: () => boards.clear() };
+    return { define, load, addRival, list, submit, page, reset: () => boards.clear() };
+  }
+
+  // src/mock-manifest.js
+  var MANIFEST_PATH = "grush.json";
+  var MAX_BYTES = 64 * 1024;
+  var MAX_LEADERBOARDS = 20;
+  var MAX_TITLE_LENGTH = 60;
+  var KEY_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
+  var LINE_BREAKING_OR_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}\u202A-\u202E\u2066-\u2069]+/gu;
+  var TOP_LEVEL_FIELDS = /* @__PURE__ */ new Set(["$schema", "leaderboards"]);
+  var ENTRY_FIELDS = /* @__PURE__ */ new Set([
+    "key",
+    "title",
+    "sort",
+    "valueType",
+    "aggregation",
+    "period",
+    "minValue",
+    "maxValue",
+    "enabled"
+  ]);
+  var CHOICES = {
+    sort: ["desc", "asc"],
+    valueType: ["int", "float", "duration_ms"],
+    aggregation: ["best", "last", "sum"],
+    period: ["all_time", "daily", "weekly", "monthly"]
+  };
+  function isPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+  function invalidField(field) {
+    return { ok: false, error: `${MANIFEST_PATH} has an invalid value: ${field}` };
+  }
+  function readSource(source) {
+    if (typeof source !== "string") return { ok: true, value: source };
+    if (new TextEncoder().encode(source).byteLength > MAX_BYTES) {
+      return { ok: false, error: `${MANIFEST_PATH} is too large (${MAX_BYTES / 1024}KB at most).` };
+    }
+    try {
+      return { ok: true, value: JSON.parse(source.replace(/^\uFEFF/, "")) };
+    } catch {
+      return { ok: false, error: `${MANIFEST_PATH} can't be read as a JSON object.` };
+    }
+  }
+  function readEntry(item, at) {
+    if (!isPlainObject(item)) return invalidField(at);
+    for (const field of Object.keys(item)) {
+      if (!ENTRY_FIELDS.has(field)) {
+        return { ok: false, error: `${MANIFEST_PATH} has an unknown field: ${at}.${field}` };
+      }
+    }
+    if (typeof item.key !== "string" || !KEY_PATTERN.test(item.key)) return invalidField(`${at}.key`);
+    const title = typeof item.title === "string" ? item.title.replace(LINE_BREAKING_OR_CONTROL, " ").trim() : "";
+    if (title.length < 1 || title.length > MAX_TITLE_LENGTH) return invalidField(`${at}.title`);
+    for (const [field, choices] of Object.entries(CHOICES)) {
+      if (!choices.includes(item[field])) return invalidField(`${at}.${field}`);
+    }
+    if (item.enabled !== void 0 && typeof item.enabled !== "boolean") {
+      return invalidField(`${at}.enabled`);
+    }
+    for (const field of ["minValue", "maxValue"]) {
+      const value = item[field];
+      if (value !== void 0 && value !== null && !Number.isFinite(value)) {
+        return invalidField(`${at}.${field}`);
+      }
+    }
+    const minValue = item.minValue ?? null;
+    const maxValue = item.maxValue ?? null;
+    if (minValue === null !== (maxValue === null) || minValue !== null && minValue >= maxValue) {
+      return invalidField(`${at}.minValue / maxValue`);
+    }
+    return {
+      ok: true,
+      entry: {
+        key: item.key,
+        title,
+        sort: item.sort,
+        valueType: item.valueType,
+        aggregation: item.aggregation,
+        period: item.period,
+        minValue,
+        maxValue,
+        enabled: item.enabled !== false
+      }
+    };
+  }
+  function parseLeaderboardManifest(source) {
+    const read = readSource(source);
+    if (!read.ok) return read;
+    const parsed = read.value;
+    if (!isPlainObject(parsed)) {
+      return { ok: false, error: `${MANIFEST_PATH} can't be read as a JSON object.` };
+    }
+    for (const field of Object.keys(parsed)) {
+      if (!TOP_LEVEL_FIELDS.has(field)) {
+        return { ok: false, error: `${MANIFEST_PATH} has an unknown field: ${field}` };
+      }
+    }
+    const list = parsed.leaderboards ?? [];
+    if (!Array.isArray(list)) return invalidField("leaderboards");
+    if (list.length > MAX_LEADERBOARDS) {
+      return {
+        ok: false,
+        error: `${MANIFEST_PATH} can declare up to ${MAX_LEADERBOARDS} leaderboards.`
+      };
+    }
+    const leaderboards = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const [index, item] of list.entries()) {
+      const read2 = readEntry(item, `leaderboards[${index}]`);
+      if (!read2.ok) return read2;
+      if (seen.has(read2.entry.key)) {
+        return {
+          ok: false,
+          error: `${MANIFEST_PATH} declares the leaderboard key more than once: ${read2.entry.key}`
+        };
+      }
+      seen.add(read2.entry.key);
+      leaderboards.push(read2.entry);
+    }
+    return { ok: true, leaderboards };
   }
 
   // src/bytes.js
@@ -507,6 +683,44 @@
       const { index: _index, ...identity } = localPeerWire(-1);
       return { ...identity, isGuest: !config.signedIn };
     });
+    let manifestRead = null;
+    let manifestGeneration = 0;
+    async function readManifestFile(generation) {
+      const location = globalThis.location;
+      if (typeof globalThis.fetch !== "function" || !location?.href || location.protocol === "file:") {
+        return;
+      }
+      let text2;
+      try {
+        const response = await globalThis.fetch(new URL(MANIFEST_PATH, location.href), {
+          cache: "no-store"
+        });
+        if (!response.ok || (response.headers?.get("content-type") ?? "").includes("text/html")) {
+          return;
+        }
+        text2 = await response.text();
+      } catch {
+        return;
+      }
+      if (generation !== manifestGeneration) return;
+      const parsed = parseLeaderboardManifest(text2);
+      if (!parsed.ok) {
+        globalThis.console?.warn?.(`[GRush mock] ${parsed.error}`);
+        return;
+      }
+      leaderboards.load(parsed.leaderboards, true);
+    }
+    function manifestReady() {
+      manifestRead ?? (manifestRead = readManifestFile(manifestGeneration));
+      return manifestRead;
+    }
+    function loadLeaderboards(manifest) {
+      manifestGeneration += 1;
+      manifestRead = Promise.resolve();
+      const parsed = parseLeaderboardManifest(manifest);
+      if (!parsed.ok) return invalid(parsed.error);
+      return ok(leaderboards.load(parsed.leaderboards, false));
+    }
     function requestProfile() {
       if (!config.signedIn) {
         return failure(CODES.signInRequired, "The player is a guest and has no profile.");
@@ -652,6 +866,7 @@
     const controls = {
       config,
       defineLeaderboard: (key, options) => leaderboards.define(key, options),
+      loadLeaderboards,
       addRival: (key, displayName, value, options) => leaderboards.addRival(key, displayName, value, options),
       definePlayerState(pseudoId, payload, options = {}) {
         otherStates.set(pseudoId, {
@@ -666,6 +881,8 @@
       removePeer: (peer) => net.removePeer(peer),
       reset() {
         leaderboards.reset();
+        manifestGeneration += 1;
+        manifestRead = null;
         otherStates.clear();
         cloudSaves.clear();
         localSaves.clear();
@@ -686,6 +903,7 @@
       async call(method, params = {}) {
         const handler = handlers[method];
         if (!handler) return failure(CODES.unsupported, `The mock does not implement ${method}.`);
+        if (method.startsWith("leaderboard.")) await manifestReady();
         await new Promise((resolve) => setTimeout(resolve, 0));
         try {
           return snapshot(handler(params ?? {}));
@@ -1076,7 +1294,7 @@
   }
 
   // src/sdk.js
-  var VERSION = "0.4.0";
+  var VERSION = "0.5.0";
   var REQUIRED_PROTOCOL_VERSION = 1;
   var PLAYER_STATE_PROTOCOL_VERSION = 2;
   var SHARE_PROTOCOL_VERSION = 3;

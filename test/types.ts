@@ -57,6 +57,24 @@ async function useSdk(): Promise<void> {
   const local = createGRush({ backend: "mock" });
   local.mock.config.shareStatus = "cancelled";
   local.mock.defineLeaderboard("score", { sort: "asc", minValue: 0 });
+  local.mock.defineLeaderboard("daily", { period: "daily", enabled: false });
+  const manifest = local.mock.loadLeaderboards({
+    leaderboards: [
+      {
+        key: "high_score",
+        title: "High score",
+        sort: "desc",
+        valueType: "int",
+        aggregation: "best",
+        period: "weekly",
+        minValue: 0,
+        maxValue: 1000,
+      },
+    ],
+  });
+  const keys: string[] = manifest.ok ? manifest.value : [];
+  void keys;
+  local.mock.loadLeaderboards("{}");
   local.mock.config.unreliableDropRate = 0.2;
   window.GRush.configure({ backend: "auto" });
 }

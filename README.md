@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.4.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.5.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -58,7 +58,7 @@ TypeScript の型は `grush-sdk.d.ts`。
 | 呼び出し | 返る `value` |
 |---|---|
 | `GRush.player.getSelf()` / `requestProfile()` / `revokeProfile()` | `{ pseudoId, isGuest, profileConsent, displayName, avatarUrl }` |
-| `GRush.leaderboards.list()` | ランキング定義の配列（定義は Studio で作者が宣言する） |
+| `GRush.leaderboards.list()` | ランキング定義の配列（定義は Studio かビルドの `grush.json` で作者が宣言する） |
 | `GRush.leaderboards.submit(key, value, { metadata, operationId })` | `{ accepted, updated, value, rank, verified }` |
 | `GRush.leaderboards.top(key, { limit, offset })` / `aroundMe(key, { range })` / `friends(key, { limit })` | `{ key, title, entries, total, verified, ... }` |
 | `GRush.playerState.getMine()` / `setMine(payload, baseRevision)` / `get(pseudoIds)` / `report(pseudoId)` | `{ pseudoId, payload, revision, updatedAt }` など |
@@ -167,6 +167,17 @@ if (GRush.backend === "mock") {
 モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
 
 **`unreliableDropRate` は既定 0 だが、出荷前に必ず 0 より大きくして試すこと。** パケットが落ちる前提で書けているかを確かめられる場所はここだけになる。
+
+### grush.json をモックで使う
+
+ランキングの定義をビルドの最上位（`index.html` の隣）の `grush.json` に書いておくと、モックは最初のランキングの呼び出しの前にページと同じフォルダの `grush.json` を読み、その枠を宣言する。アップロードと手元の確認で同じファイルを使える。書式は [SDK ガイドのランキング](https://gamerush.jp/sdk#leaderboards)。
+
+- 読むのは `http://localhost` などのローカルサーバから開いたときだけ。`file://` では読まないので、`GRush.mock.loadLeaderboards(manifest)` に中身（オブジェクトか JSON の文字列）を渡す
+- ファイルが無ければ何もしない。書式の誤りはアップロードと同じ文言でコンソールに警告し、その中身は使わない。`loadLeaderboards` は誤りを `invalidParams` で返す
+- 同じ key を `defineLeaderboard` で宣言してあれば、自動で読んだ `grush.json` よりそちらを使う。`loadLeaderboards` を呼んだら、自動では読まない
+- `enabled: false` の枠は一覧に出ず、投稿と取得は宣言していない key と同じく `invalidParams` になる。`minValue` / `maxValue` の無い枠は、GameRush と同じく投稿を受けない
+- `period` が `daily` / `weekly` / `monthly` の枠は、GameRush と同じ期間キー（UTC）を返し、期間が変わると空からやり直す
+- `reset()` の後は、次のランキングの呼び出しで `grush.json` を読み直す
 
 ## サンプル
 

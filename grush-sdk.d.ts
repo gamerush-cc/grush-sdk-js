@@ -43,6 +43,24 @@ export type GRushLeaderboardDefinition = {
   maxValue: number | null;
 };
 
+export type GRushLeaderboardManifestEntry = {
+  key: string;
+  title: string;
+  sort: "asc" | "desc";
+  valueType: "int" | "float" | "duration_ms";
+  aggregation: "best" | "last" | "sum";
+  period: "all_time" | "daily" | "weekly" | "monthly";
+  minValue?: number | null;
+  maxValue?: number | null;
+  enabled?: boolean;
+};
+
+/** ビルドの最上位に置く `grush.json` の中身。アップロードでランキングの定義になる。 */
+export type GRushLeaderboardManifest = {
+  $schema?: string;
+  leaderboards?: GRushLeaderboardManifestEntry[];
+};
+
 export type GRushSubmitResult = {
   accepted: boolean;
   updated: boolean;
@@ -211,8 +229,14 @@ export interface GRushMock {
   config: GRushMockConfig;
   defineLeaderboard(
     key: string,
-    options?: Partial<Omit<GRushLeaderboardDefinition, "key" | "period">>,
+    options?: Partial<Omit<GRushLeaderboardDefinition, "key">> & { enabled?: boolean },
   ): void;
+  /**
+   * `grush.json` の中身（オブジェクトか JSON の文字列）でモックの枠を宣言し、宣言した key を返す。
+   * アップロードと同じ規則で読み、誤りは `invalidParams` で返す。これを呼ぶと、ページの隣の
+   * `grush.json` は自動では読まない。
+   */
+  loadLeaderboards(manifest: GRushLeaderboardManifest | string): GRushResult<string[]>;
   addRival(
     key: string,
     displayName: string,
