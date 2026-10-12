@@ -152,6 +152,49 @@ export type GRushLocale = {
   languages: string[];
 };
 
+/**
+ * 分析イベントの custom field。3つまで。キーは英数字と `_` で 32 文字まで。値は1行のテキストで
+ * 40 文字（コードポイント）まで。改行と制御文字は空白に直してから数え、直した結果が空の値は拒まれる。
+ */
+export type GRushAnalyticsFields = { [key: string]: string };
+export type GRushAnalyticsOptions = { fields?: GRushAnalyticsFields };
+export type GRushEconomyFlowType = "source" | "sink";
+/** GameRush の標準の取引の種類。ほかの値（英数字と `._:-` で 32 文字まで）も受ける。 */
+export type GRushEconomyTransactionType =
+  | "TimedReward"
+  | "Onboarding"
+  | "Shop"
+  | "Gameplay"
+  | "ContextualPurchase"
+  | (string & {});
+export type GRushEconomyOptions = GRushAnalyticsOptions & {
+  /** 品目。1行のテキストで 40 文字まで。 */
+  itemSku?: string;
+};
+
+/** 確かめて作り直した分析イベント。`mock.analyticsEvents()` が返す。 */
+export type GRushAnalyticsEvent =
+  | { kind: "onboarding"; step: number; stepName?: string; fields?: GRushAnalyticsFields }
+  | {
+      kind: "funnel";
+      funnel: string;
+      funnelSessionId?: string;
+      step: number;
+      stepName?: string;
+      fields?: GRushAnalyticsFields;
+    }
+  | { kind: "custom"; name: string; value: number; fields?: GRushAnalyticsFields }
+  | {
+      kind: "economy";
+      flowType: GRushEconomyFlowType;
+      currency: string;
+      amount: number;
+      endingBalance: number;
+      transactionType: string;
+      itemSku?: string;
+      fields?: GRushAnalyticsFields;
+    };
+
 export type GRushPeer = {
   index: number;
   pseudoId: string;
@@ -246,6 +289,8 @@ export interface GRushMock {
   definePlayerState(pseudoId: string, payload: JsonValue, options?: { hidden?: boolean }): void;
   addPeer(displayName: string, avatarUrl?: string | null): GRushMockPeer | null;
   removePeer(peer: GRushMockPeer): void;
+  /** モックが受けた分析イベントの写し。直近の 200 件を古い順に返す。`reset()` で空になる。 */
+  analyticsEvents(): GRushAnalyticsEvent[];
   reset(): void;
 }
 
@@ -324,6 +369,52 @@ export interface GRushSdk {
     get(): Promise<GRushResult<GRushLocale>>;
     current(): GRushLocale | null;
     onChange(handler: (locale: GRushLocale) => void): () => void;
+  };
+  /**
+   * 作者のアナリティクスへ送るイベント。ほかの API と違い、どれも同期で `boolean` を返し、例外を投げない。
+   * `true` は GameRush へ渡したことで、保存されたことではない。形が不正なとき、`protocolVersion` 6 未満の
+   * GameRush、GameRush の外では `false`。名前・値・field にプレイヤーを識別できる情報を入れない。
+   *
+   * `true` でも保存されないもの: 前面に出るまでに溜めた 30 件を超えた分（これは `false`）のほか、前面に出た後に
+   * GameRush 本体が掛ける上限（500ms に1件、まとめて最大 30 件、送る前の列は合計 200 件）を超えた分、
+   * セッションあたりの上限（オンボーディングを含むファネルのステップ 200 件・カスタムイベント 500 件・
+   * エコノミー 500 件）を超えた分、送れなかった分。オンボーディングとファネルの同じステップは、1セッション
+   * （ページを読み直しても続く）で最初の1回だけが残る。
+   */
+  analytics: {
+    /** オンボーディングのステップ。`step` は 1〜100 の整数。 */
+    logOnboardingStep(
+      step: number,
+      stepName?: string | null,
+      options?: GRushAnalyticsOptions,
+    ): boolean;
+    /**
+     * ファネルのステップ。`funnel` と `funnelSessionId` は英数字と `._:-` で 64 文字まで。同じファネルを
+     * 1つのプレイで何度も通るなら、通るたびに別の `funnelSessionId` を渡す。
+     */
+    logFunnelStep(
+      funnel: string,
+      funnelSessionId: string | null | undefined,
+      step: number,
+      stepName?: string | null,
+      options?: GRushAnalyticsOptions,
+    ): boolean;
+    /** カスタムイベント。`value` は省略で 1、絶対値 1e9 まで。 */
+    logCustomEvent(name: string, value?: number, options?: GRushAnalyticsOptions): boolean;
+    /**
+     * 通貨の入手（`"source"`）と消費（`"sink"`）。`amount` は正の値、`endingBalance` はその後の残高で必須。
+     * `currency` と `transactionType` は英数字と `._:-` で 32 文字まで。
+     */
+    logEconomyEvent(
+      flowType: GRushEconomyFlowType,
+      currency: string,
+      amount: number,
+      endingBalance: number,
+      transactionType: GRushEconomyTransactionType,
+      options?: GRushEconomyOptions,
+    ): boolean;
+    /** GameRush の中で動いていて、分析イベントを送れるか。 */
+    isAvailable(): boolean;
   };
   net: {
     join(options?: { mode?: string; roomCode?: string }): Promise<GRushResult<GRushRoom>>;

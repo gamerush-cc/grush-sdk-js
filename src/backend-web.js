@@ -102,6 +102,8 @@ export function createWebBackend() {
       const unsubscribe = runtimeApi("Locale")?.onChange?.(handler);
       return typeof unsubscribe === "function" ? unsubscribe : () => {};
     },
+    analyticsAvailable: () => runtimeApi("Analytics")?.isAvailable?.() === true,
+    logAnalytics: (kind, params) => runtimeApi("Analytics")?.log?.(kind, params) === true,
     async call(method, params = {}) {
       if (method in CLOUD_SAVE_INVOKERS) return callCloudSave(method, params);
       const invoke = INVOKERS[method];

@@ -1,10 +1,10 @@
 # GameRush SDK for JavaScript
 
-GameRush の GameAPI（ランキング・公開プレイヤー状態・クラウドセーブ・共有・リアルタイム対戦）を、素の `index.html` のゲームから呼ぶためのラッパー。バンドラ不要で、script タグ 1 行でも ES Modules の `import` でも使える。使い方の正（投稿が弾かれる条件とエラーコード・API トークン）は [SDK ガイド](https://gamerush.jp/sdk)。
+GameRush の GameAPI（ランキング・公開プレイヤー状態・クラウドセーブ・共有・アナリティクス・リアルタイム対戦）を、素の `index.html` のゲームから呼ぶためのラッパー。バンドラ不要で、script タグ 1 行でも ES Modules の `import` でも使える。使い方の正（投稿が弾かれる条件とエラーコード・API トークン）は [SDK ガイド](https://gamerush.jp/sdk)。
 
 GameRush はアップロードされた全ビルドへランタイム JS（`window.GRushPlayer` など）を注入している。この SDK はその上に薄く乗り、次の 3 つを足す。
 
-- **例外を投げない。** すべての API が `{ ok, value, code, message }` を返す。GameRush の外では `code: "unsupported"` になるだけで、ゲームは止まらない
+- **例外を投げない。** すべての API が `{ ok, value, code, message }` を返す（アナリティクスと、表に書いた同期の呼び出しを除く）。GameRush の外では `code: "unsupported"` になるだけで、ゲームは止まらない
 - **ローカルで動く。** `localhost` と `file://` では自動でモックに切り替わり、アップロードせずにランキングや対戦を試せる
 - **形がそろう。** 名前・アバターは同意がある時だけ入り、`verified` は常に `false`（スコアは自己申告）
 
@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.5.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.6.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -68,6 +68,11 @@ TypeScript の型は `grush-sdk.d.ts`。
 | `GRush.locale.get()` | `{ locale, source, languages }`（下記） |
 | `GRush.locale.current()` | 同じ形、または `null`（同期。結果オブジェクトではない） |
 | `GRush.locale.onChange(handler)` | 解除関数（表示言語が決まったとき・変わったときに `handler` を呼ぶ） |
+| `GRush.analytics.logOnboardingStep(step, stepName, { fields })` | `true` / `false`（同期。下記） |
+| `GRush.analytics.logFunnelStep(funnel, funnelSessionId, step, stepName, { fields })` | `true` / `false`（同期） |
+| `GRush.analytics.logCustomEvent(name, value = 1, { fields })` | `true` / `false`（同期） |
+| `GRush.analytics.logEconomyEvent(flowType, currency, amount, endingBalance, transactionType, { itemSku, fields })` | `true` / `false`（同期） |
+| `GRush.analytics.isAvailable()` | `true` / `false`（同期） |
 | `GRush.net.join({ mode, roomCode })` | 部屋（下記） |
 
 失敗時の `code` は `unsupported` / `unavailable` / `timeout` / `rateLimited`（`retryAfterMs` 付き）/ `signInRequired` / `consentDeclined` / `invalidParams` / `conflict`（クラウドセーブの版ずれ）/ `internal`。
@@ -124,6 +129,31 @@ if (language.ok) console.log(language.value.locale, language.value.source);
 - 古い GameRush（`protocolVersion` 4 未満）では `get()` が `unsupported`、`current()` が `null`、`onChange` は何もしない解除関数を返す
 - モックは `GRush.mock.config.locale`（既定 `null` = ブラウザの言語、`source: "device"`）で切り替える。`onChange` は呼ばれない
 
+### アナリティクス
+
+```js
+GRush.analytics.logOnboardingStep(1, "tutorial_start");
+GRush.analytics.logFunnelStep("shop", "visit-1", 2, "item_selected", { fields: { tab: "weapons" } });
+GRush.analytics.logCustomEvent("boss_defeated", 1, { fields: { stage: "3" } });
+GRush.analytics.logEconomyEvent("sink", "coin", 50, 120, "Shop", { itemSku: "sword" });
+```
+
+作者のアナリティクスへ、オンボーディングとファネルのステップ・カスタムイベント・通貨の入手と消費を送る。
+
+- **ほかの API と違い、どれも同期で `true` / `false` を返し、例外を投げない。** 待たずにどこからでも呼べる。`true` は GameRush へ渡したことで、保存されたことではない
+- 形が不正なとき（下の制限）は `false` を返し、理由ごとに1回だけコンソールに警告が出る。古い GameRush（`protocolVersion` 6 未満）と GameRush の外では `false`
+- `step` は 1〜100 の整数。`value` は省略で 1、絶対値 1e9 まで。`amount` は正の値で 1e12 まで、`endingBalance`（その後の残高）は必須で絶対値 1e15 まで
+- `flowType` は `"source"`（入手）か `"sink"`（消費）。`transactionType` の標準の値は `"TimedReward"` / `"Onboarding"` / `"Shop"` / `"Gameplay"` / `"ContextualPurchase"` で、ほかの値も受ける
+- イベント名・ファネル名・`funnelSessionId` は英数字と `._:-` で 64 文字まで、通貨と `transactionType` は 32 文字まで
+- `stepName`・`itemSku`・`fields` の値は1行のテキストに直してから受ける。改行・制御文字・双方向の上書きと isolate は空白に直し、前後の空白を落としてから 40 文字（コードポイント）まで数える。直した結果が空（空白や見えない文字だけ）の `stepName` と `itemSku` は省略と同じに扱い、`fields` の値は拒む。`fields` は3つまで、キーは英数字と `_` で 32 文字まで
+- オンボーディングとファネルの同じステップは、1セッションで最初の1回だけが残る。セッションはページを読み直しても続く。同じファネルを何度も通るなら、通るたびに別の `funnelSessionId` を渡す
+- 名前・値・`fields` に、プレイヤーを識別できる情報を入れない
+- GameRush の中でも、ゲームが前面に出るまでの分は溜めてから送る。溜められるのは 30 件までで、超えた分は `false`
+- `true` を返しても、次の分は保存されない
+  - 前面に出た後に GameRush 本体が掛ける上限を超えた分。本体は 500ms に1件、まとめて最大 30 件まで受け、送る前の列は合計 200 件まで
+  - セッションあたりの保存の上限を超えた分。オンボーディングを含むファネルのステップ 200 件・カスタムイベント 500 件・エコノミー 500 件
+  - 送れなかった分（送り直さない）
+
 ### 対戦
 
 ```js
@@ -165,6 +195,8 @@ if (GRush.backend === "mock") {
 ```
 
 モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
+
+アナリティクスのモックは、GameRush と同じ検査をして、通ったイベントを1件ずつコンソールに出し、直近の 200 件を `GRush.mock.analyticsEvents()` で返す（`reset()` で空になる）。弾いたイベントは、GameRush と同じく理由ごとに1回だけコンソールに警告する（`reset()` でまた出る）。どこへも送らない。モックが名乗る `protocolVersion` は 6。前面に出るまでの 30 件の溜め・本体の上限・同じステップを最初の1回だけ残す扱い・セッションあたりの上限は再現しないので、モックでは `true` の分がすべて記録に残る。
 
 **`unreliableDropRate` は既定 0 だが、出荷前に必ず 0 より大きくして試すこと。** パケットが落ちる前提で書けているかを確かめられる場所はここだけになる。
 

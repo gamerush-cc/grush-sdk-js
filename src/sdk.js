@@ -14,12 +14,13 @@ import {
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
 const LOCALE_PROTOCOL_VERSION = 4;
 const CLOUD_SAVE_LOCAL_PROTOCOL_VERSION = 5;
+const ANALYTICS_PROTOCOL_VERSION = 6;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -186,6 +187,58 @@ export function createGRush(options = {}) {
     },
   };
 
+  // Analytics answers synchronously with a boolean and never throws, so a game can log from anywhere
+  // without awaiting. An older GameRush or a page outside GameRush answers false.
+  function analyticsBackend() {
+    const active = backend();
+    if (!active.isAvailable() || active.protocolVersion() < ANALYTICS_PROTOCOL_VERSION) return null;
+    return active;
+  }
+
+  function logAnalytics(kind, build) {
+    try {
+      const active = analyticsBackend();
+      if (!active?.logAnalytics) return false;
+      return active.logAnalytics(kind, build()) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  const fieldsOf = (options) => options?.fields;
+
+  const analytics = {
+    logOnboardingStep: (step, stepName, options) =>
+      logAnalytics("onboarding", () => ({ step, stepName, fields: fieldsOf(options) })),
+    logFunnelStep: (funnel, funnelSessionId, step, stepName, options) =>
+      logAnalytics("funnel", () => ({
+        funnel,
+        funnelSessionId,
+        step,
+        stepName,
+        fields: fieldsOf(options),
+      })),
+    logCustomEvent: (name, value, options) =>
+      logAnalytics("custom", () => ({ name, value, fields: fieldsOf(options) })),
+    logEconomyEvent: (flowType, currency, amount, endingBalance, transactionType, options) =>
+      logAnalytics("economy", () => ({
+        flowType,
+        currency,
+        amount,
+        endingBalance,
+        transactionType,
+        itemSku: options?.itemSku,
+        fields: fieldsOf(options),
+      })),
+    isAvailable() {
+      try {
+        return analyticsBackend()?.analyticsAvailable?.() === true;
+      } catch {
+        return false;
+      }
+    },
+  };
+
   const net = {
     async join(rawOptions) {
       const opts = rawOptions ?? {};
@@ -241,6 +294,7 @@ export function createGRush(options = {}) {
     cloudSave,
     share,
     locale,
+    analytics,
     net,
     mock: mockBackend.controls,
   };
