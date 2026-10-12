@@ -105,7 +105,8 @@ export type GRushPlayerState = {
 export type GRushPlayerStateWriteOptions = {
   /**
    * 相手探しに使う数値（-1e9 より大きく 1e9 より小さい）。`null` で消し、省略すると今の値のまま。
-   * `protocolVersion` 7 未満の GameRush では送らず、payload だけを書く。
+   * `protocolVersion` 7 未満の GameRush では送らず、payload だけを書く。7 以上でも古い GameRush 本体では
+   * rating が黙って捨てられるので、書けたかは返る状態の `rating` で確かめる。
    */
   rating?: number | null;
 };
