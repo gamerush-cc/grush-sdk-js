@@ -34,6 +34,7 @@ async function useSdk(): Promise<void> {
     void status;
     await GRush.share.share({ image: { base64: "AAAA", mimeType: "image/png" } });
     await GRush.share.share({ image: new Uint8Array([1]) });
+    await GRush.share.share({ text: "Stage 3 clear", launchParams: { stage: "3" } });
   }
 
   const language = await GRush.locale.get();

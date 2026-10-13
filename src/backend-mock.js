@@ -8,8 +8,8 @@ import { CODES, failure, ok } from "./result.js";
 const MANIFEST_TIMEOUT_MS = 3000;
 // How many analytics events mock.analyticsEvents() keeps, newest last.
 export const MOCK_ANALYTICS_MAX_EVENTS = 200;
-// The newest protocol the mock implements (launch parameters need 8).
-const MOCK_PROTOCOL_VERSION = 8;
+// The newest protocol the mock implements (launch parameters on share need 9).
+const MOCK_PROTOCOL_VERSION = 9;
 
 const STORAGE_KEY = "grush-sdk-mock";
 const SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -42,6 +42,30 @@ function mockLaunch(config) {
       Object.entries(params).filter(([, value]) => typeof value === "string"),
     ),
   };
+}
+
+// The same limits GameRush applies to the launch parameters a game attaches to a share. Unlike the parameters a
+// game reads, one bad key or value rejects the whole share.
+const SHARE_LAUNCH_KEY = /^[A-Za-z0-9_-]{1,32}$/;
+const SHARE_LAUNCH_VALUE = /^[A-Za-z0-9._~:,-]{0,128}$/;
+const SHARE_LAUNCH_MAX_PARAMS = 8;
+
+function shareLaunchParamsValid(value) {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  const keys = Object.keys(value);
+  // Symbol and non-enumerable keys are not in Object.keys, so reject them instead of dropping them.
+  if (Reflect.ownKeys(value).length !== keys.length) return false;
+  if (keys.length > SHARE_LAUNCH_MAX_PARAMS) return false;
+  return keys.every(
+    (key) =>
+      SHARE_LAUNCH_KEY.test(key) &&
+      key !== "__proto__" &&
+      typeof value[key] === "string" &&
+      SHARE_LAUNCH_VALUE.test(value[key]),
+  );
 }
 
 function deviceLanguages() {
@@ -493,7 +517,10 @@ export function createMockBackend(config) {
     "cloudSave.load": loadCloud,
     "cloudSave.save": saveCloud,
     "cloudSave.remove": removeCloud,
-    "share.open": () => {
+    "share.open": (p) => {
+      if (!shareLaunchParamsValid(p.launchParams)) {
+        return failure(CODES.invalidParams, "Invalid launch params.");
+      }
       if (!config.shareAvailable) return failure(CODES.unavailable, "Sharing is unavailable here.");
       return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
     },
