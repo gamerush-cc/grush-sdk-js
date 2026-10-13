@@ -23,7 +23,7 @@ import {
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.10.0";
+export const VERSION = "0.11.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
@@ -35,6 +35,8 @@ const MATCHMAKING_PROTOCOL_VERSION = 7;
 const INBOX_PROTOCOL_VERSION = 7;
 const TRADE_PROTOCOL_VERSION = 7;
 const LAUNCH_PROTOCOL_VERSION = 8;
+// launchParams on share. Older runtimes drop them and would share a link without them.
+const SHARE_LAUNCH_PROTOCOL_VERSION = 9;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -44,6 +46,17 @@ const noneBackend = {
   protocolVersion: () => 0,
   call: async () => unsupported(),
 };
+
+// Only undefined, null and a plain object with no own keys count as "no launch params". Anything else,
+// such as a Map or an object whose keys are inherited, is passed on so GameRush answers invalidParams
+// instead of the share opening without them.
+function hasLaunchParams(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== "object") return true;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return true;
+  return Reflect.ownKeys(value).length > 0;
+}
 
 function isLocalDevelopment() {
   const location = globalThis.location;
@@ -274,7 +287,16 @@ export function createGRush(options = {}) {
       const params = {};
       if (opts.text !== undefined) params.text = opts.text;
       if (opts.image !== undefined) params.image = opts.image;
-      return mapped("share.open", params, required(shareResultOf), SHARE_PROTOCOL_VERSION);
+      // GameRush checks the keys and values. Anything but an empty object is passed on, so a malformed
+      // value comes back as invalidParams instead of being dropped here.
+      const withLaunchParams = hasLaunchParams(opts.launchParams);
+      if (withLaunchParams) params.launchParams = opts.launchParams;
+      return mapped(
+        "share.open",
+        params,
+        required(shareResultOf),
+        withLaunchParams ? SHARE_LAUNCH_PROTOCOL_VERSION : SHARE_PROTOCOL_VERSION,
+      );
     },
     async isAvailable() {
       const result = await call("share.getAvailability", undefined, SHARE_PROTOCOL_VERSION);
