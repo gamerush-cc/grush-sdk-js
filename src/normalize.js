@@ -215,3 +215,16 @@ export function localeOf(raw) {
     languages: languages.length ? languages : [raw.locale],
   };
 }
+
+// GameRush has already checked the keys and values, so only the shape is kept here. Object.fromEntries
+// keeps a "__proto__" key as an own property instead of changing the prototype.
+export function launchOf(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const params = raw.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) return null;
+  return {
+    params: Object.fromEntries(
+      Object.entries(params).filter(([, value]) => typeof value === "string"),
+    ),
+  };
+}

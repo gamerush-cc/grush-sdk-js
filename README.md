@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.8.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.9.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -71,6 +71,8 @@ TypeScript の型は `grush-sdk.d.ts`。
 | `GRush.locale.get()` | `{ locale, source, languages }`（下記） |
 | `GRush.locale.current()` | 同じ形、または `null`（同期。結果オブジェクトではない） |
 | `GRush.locale.onChange(handler)` | 解除関数（表示言語が決まったとき・変わったときに `handler` を呼ぶ） |
+| `GRush.launch.get()` | `{ params }`（起動パラメータ。下記） |
+| `GRush.launch.current()` | 同じ形、または `null`（同期。結果オブジェクトではない） |
 | `GRush.analytics.logOnboardingStep(step, stepName, { fields })` | `true` / `false`（同期。下記） |
 | `GRush.analytics.logFunnelStep(funnel, funnelSessionId, step, stepName, { fields })` | `true` / `false`（同期） |
 | `GRush.analytics.logCustomEvent(name, value = 1, { fields })` | `true` / `false`（同期） |
@@ -210,6 +212,23 @@ if (language.ok) console.log(language.value.locale, language.value.source);
 - 古い GameRush（`protocolVersion` 4 未満）では `get()` が `unsupported`、`current()` が `null`、`onChange` は何もしない解除関数を返す
 - モックは `GRush.mock.config.locale`（既定 `null` = ブラウザの言語、`source: "device"`）で切り替える。`onChange` は呼ばれない
 
+### 起動パラメータ
+
+GameRush の URL に `gp.` を付けて載せたキーと値を読む。ゲームのページの URL が `/g/<コード>?gp.item=sword&gp.stage=3` なら `{ item: "sword", stage: "3" }`。シェアしたリンクから特定のアイテムやステージへ飛ばすのに使う。
+
+```js
+const launched = await GRush.launch.get();
+const item = launched.ok ? launched.value.params.item : undefined;
+if (item && ownsItem(item)) openItem(item);
+```
+
+- **値を信用しない。** リンクは誰でも作れる。アイテムが存在するか・プレイヤーが持っているか・ステージが解放済みかをゲームの側で確かめ、確かめられなければ無視する
+- キーは英数字と `_-` で 32 文字まで（`__proto__` は使えない）、値は英数字と `._~:,-` で 128 文字まで（空も可）、8 個まで。形の合わない項目は GameRush が落とし、8 個を超えたら全部落とす
+- 渡るのは、プレイヤーが最初に開いたスライドのゲームだけ。別のゲームへスワイプして戻ったときは `params` が空。フィードではページを読み直すと空になるが、単体表示や埋め込みでは読み直すと同じ値がまた渡ることがあるので、何度渡っても困らないように書く
+- `get()` は GameRush から届くまで待つ。`current()` は届く前なら `null`
+- 古い GameRush（`protocolVersion` 8 未満）と GameRush の外では `get()` が `unsupported`、`current()` が `null`
+- モックは `GRush.mock.config.launchParams`（既定 `{}`）をそのまま返す。上の制限では確かめない
+
 ### アナリティクス
 
 ```js
@@ -281,7 +300,7 @@ if (GRush.backend === "mock") {
 
 モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
 
-アナリティクスのモックは、GameRush と同じ検査をして、通ったイベントを1件ずつコンソールに出し、直近の 200 件を `GRush.mock.analyticsEvents()` で返す（`reset()` で空になる）。弾いたイベントは、GameRush と同じく理由ごとに1回だけコンソールに警告する（`reset()` でまた出る）。どこへも送らない。前面に出るまでの 30 件の溜め・本体の上限・同じステップを最初の1回だけ残す扱い・セッションあたりの上限は再現しないので、モックでは `true` の分がすべて記録に残る。モックが名乗る `protocolVersion` は 7。
+アナリティクスのモックは、GameRush と同じ検査をして、通ったイベントを1件ずつコンソールに出し、直近の 200 件を `GRush.mock.analyticsEvents()` で返す（`reset()` で空になる）。弾いたイベントは、GameRush と同じく理由ごとに1回だけコンソールに警告する（`reset()` でまた出る）。どこへも送らない。前面に出るまでの 30 件の溜め・本体の上限・同じステップを最初の1回だけ残す扱い・セッションあたりの上限は再現しないので、モックでは `true` の分がすべて記録に残る。モックが名乗る `protocolVersion` は 8。
 
 相手探し・受信箱・交換所のモックは、`GRush.mock.rivals` の 3 人の相手を持つ。相手はそれぞれ rating 付きの公開プレイヤー状態を持ち、届いたメッセージを同じ `kind` と `payload` で送り返す。はじめと `reset()` の後は、最初の相手からのメッセージ1通と、相手の受付中の出品を2件持つ。payload・offer・want・give の形、`operationId` での冪等、受付中の出品の上限、受諾の `outcome`、`pending` と `ack` は GameRush と同じ規則で動く。通報を承諾すると（`confirmInboxReport` / `confirmTradeReport`、既定 `true`）相手をブロックし、その相手のメッセージと出品は見えなくなる。
 

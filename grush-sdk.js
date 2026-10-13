@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.8.0 */
+/*! GameRush SDK for JavaScript v0.9.0 */
 "use strict";
 (() => {
   // src/analytics-rules.js
@@ -1104,7 +1104,7 @@
   // src/backend-mock.js
   var MANIFEST_TIMEOUT_MS = 3e3;
   var MOCK_ANALYTICS_MAX_EVENTS = 200;
-  var MOCK_PROTOCOL_VERSION = 7;
+  var MOCK_PROTOCOL_VERSION = 8;
   var STORAGE_KEY = "grush-sdk-mock";
   var SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
   var PLAYER_STATE_MAX_BYTES = 4 * 1024;
@@ -1123,6 +1123,15 @@
     if (Array.isArray(value)) return value.some(containsOpaqueString);
     if (value && typeof value === "object") return Object.values(value).some(containsOpaqueString);
     return false;
+  }
+  function mockLaunch(config) {
+    const params = config.launchParams;
+    if (!params || typeof params !== "object") return { params: {} };
+    return {
+      params: Object.fromEntries(
+        Object.entries(params).filter(([, value]) => typeof value === "string")
+      )
+    };
   }
   function deviceLanguages() {
     const list = globalThis.navigator?.languages;
@@ -1155,7 +1164,8 @@
       maxPeers: 8,
       shareAvailable: true,
       shareStatus: "opened",
-      locale: null
+      locale: null,
+      launchParams: {}
     };
   }
   var memoryStore = null;
@@ -1508,6 +1518,7 @@
       },
       "share.getAvailability": () => ok(config.shareAvailable === true),
       "locale.get": () => ok(mockLocale(config)),
+      "launch.get": () => ok(mockLaunch(config)),
       "net.join": (p) => {
         const joined = net.join(p);
         if (joined === null) return failure(CODES.internal, "Failed to join a room.");
@@ -1554,6 +1565,7 @@
       localeCurrent: () => mockLocale(config),
       localeOnChange: () => () => {
       },
+      launchCurrent: () => mockLaunch(config),
       analyticsAvailable: () => true,
       logAnalytics,
       async call(method, params = {}) {
@@ -1627,6 +1639,7 @@
     "share.open": (apis, p) => apis.Share?.share(p),
     "share.getAvailability": (apis) => apis.Share?.isAvailable(),
     "locale.get": (apis) => apis.Locale?.get(),
+    "launch.get": (apis) => apis.Launch?.get(),
     "net.join": (apis, p) => apis.Net?.join(p).then(
       (room) => room ? { source: roomSourceOf(room), info: describeRoom(room) } : null
     )
@@ -1651,6 +1664,7 @@
       Net: runtimeApi("Net"),
       Share: runtimeApi("Share"),
       Locale: runtimeApi("Locale"),
+      Launch: runtimeApi("Launch"),
       Inbox: runtimeApi("Inbox"),
       Trade: runtimeApi("Trade")
     };
@@ -1678,6 +1692,7 @@
         return typeof unsubscribe === "function" ? unsubscribe : () => {
         };
       },
+      launchCurrent: () => runtimeApi("Launch")?.current?.() ?? null,
       analyticsAvailable: () => runtimeApi("Analytics")?.isAvailable?.() === true,
       logAnalytics: (kind, params) => runtimeApi("Analytics")?.log?.(kind, params) === true,
       async call(method, params = {}) {
@@ -1885,6 +1900,16 @@
       languages: languages.length ? languages : [raw.locale]
     };
   }
+  function launchOf(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const params = raw.params;
+    if (!params || typeof params !== "object" || Array.isArray(params)) return null;
+    return {
+      params: Object.fromEntries(
+        Object.entries(params).filter(([, value]) => typeof value === "string")
+      )
+    };
+  }
 
   // src/room.js
   var EVENTS = ["message", "peerjoin", "peerleave", "host", "transportchange", "error", "close"];
@@ -2051,7 +2076,7 @@
   }
 
   // src/sdk.js
-  var VERSION = "0.8.0";
+  var VERSION = "0.9.0";
   var REQUIRED_PROTOCOL_VERSION = 1;
   var PLAYER_STATE_PROTOCOL_VERSION = 2;
   var SHARE_PROTOCOL_VERSION = 3;
@@ -2061,6 +2086,7 @@
   var MATCHMAKING_PROTOCOL_VERSION = 7;
   var INBOX_PROTOCOL_VERSION = 7;
   var TRADE_PROTOCOL_VERSION = 7;
+  var LAUNCH_PROTOCOL_VERSION = 8;
   var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
   var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
   var noneBackend = {
@@ -2288,6 +2314,18 @@
         });
       }
     };
+    const launch = {
+      get: () => mapped("launch.get", void 0, required(launchOf), LAUNCH_PROTOCOL_VERSION),
+      current() {
+        const active = backend();
+        if (!active.isAvailable() || active.protocolVersion() < LAUNCH_PROTOCOL_VERSION) return null;
+        try {
+          return launchOf(active.launchCurrent?.());
+        } catch {
+          return null;
+        }
+      }
+    };
     function analyticsBackend() {
       const active = backend();
       if (!active.isAvailable() || active.protocolVersion() < ANALYTICS_PROTOCOL_VERSION) return null;
@@ -2386,6 +2424,7 @@
       cloudSave,
       share,
       locale,
+      launch,
       analytics,
       net,
       mock: mockBackend.controls

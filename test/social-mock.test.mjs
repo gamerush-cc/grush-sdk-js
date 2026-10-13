@@ -15,8 +15,8 @@ afterEach(() => {
   delete globalThis.location;
 });
 
-test("the mock speaks protocol 7", () => {
-  assert.equal(sdk.protocolVersion(), 7);
+test("the mock speaks protocol 8", () => {
+  assert.equal(sdk.protocolVersion(), 8);
 });
 
 test("matchmaking samples rivals, filters by rating and never returns yourself", async () => {

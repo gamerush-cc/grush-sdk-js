@@ -64,6 +64,7 @@ const INVOKERS = {
   "share.open": (apis, p) => apis.Share?.share(p),
   "share.getAvailability": (apis) => apis.Share?.isAvailable(),
   "locale.get": (apis) => apis.Locale?.get(),
+  "launch.get": (apis) => apis.Launch?.get(),
   "net.join": (apis, p) =>
     apis.Net?.join(p).then((room) =>
       room ? { source: roomSourceOf(room), info: describeRoom(room) } : null,
@@ -93,6 +94,7 @@ function currentApis() {
     Net: runtimeApi("Net"),
     Share: runtimeApi("Share"),
     Locale: runtimeApi("Locale"),
+    Launch: runtimeApi("Launch"),
     Inbox: runtimeApi("Inbox"),
     Trade: runtimeApi("Trade"),
   };
@@ -121,6 +123,7 @@ export function createWebBackend() {
       const unsubscribe = runtimeApi("Locale")?.onChange?.(handler);
       return typeof unsubscribe === "function" ? unsubscribe : () => {};
     },
+    launchCurrent: () => runtimeApi("Launch")?.current?.() ?? null,
     analyticsAvailable: () => runtimeApi("Analytics")?.isAvailable?.() === true,
     logAnalytics: (kind, params) => runtimeApi("Analytics")?.log?.(kind, params) === true,
     async call(method, params = {}) {

@@ -8,8 +8,8 @@ import { CODES, failure, ok } from "./result.js";
 const MANIFEST_TIMEOUT_MS = 3000;
 // How many analytics events mock.analyticsEvents() keeps, newest last.
 export const MOCK_ANALYTICS_MAX_EVENTS = 200;
-// The newest protocol the mock implements (matchmaking, the inbox and trades need 7).
-const MOCK_PROTOCOL_VERSION = 7;
+// The newest protocol the mock implements (launch parameters need 8).
+const MOCK_PROTOCOL_VERSION = 8;
 
 const STORAGE_KEY = "grush-sdk-mock";
 const SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -30,6 +30,18 @@ function containsOpaqueString(value) {
   if (Array.isArray(value)) return value.some(containsOpaqueString);
   if (value && typeof value === "object") return Object.values(value).some(containsOpaqueString);
   return false;
+}
+
+// The mock hands the configured parameters over as they are. GameRush drops keys and values that do not fit
+// its limits, so check them in GameRush before relying on them.
+function mockLaunch(config) {
+  const params = config.launchParams;
+  if (!params || typeof params !== "object") return { params: {} };
+  return {
+    params: Object.fromEntries(
+      Object.entries(params).filter(([, value]) => typeof value === "string"),
+    ),
+  };
 }
 
 function deviceLanguages() {
@@ -66,6 +78,7 @@ export function defaultMockConfig() {
     shareAvailable: true,
     shareStatus: "opened",
     locale: null,
+    launchParams: {},
   };
 }
 
@@ -486,6 +499,7 @@ export function createMockBackend(config) {
     },
     "share.getAvailability": () => ok(config.shareAvailable === true),
     "locale.get": () => ok(mockLocale(config)),
+    "launch.get": () => ok(mockLaunch(config)),
     "net.join": (p) => {
       const joined = net.join(p);
       if (joined === null) return failure(CODES.internal, "Failed to join a room.");
@@ -535,6 +549,7 @@ export function createMockBackend(config) {
     protocolVersion: () => MOCK_PROTOCOL_VERSION,
     localeCurrent: () => mockLocale(config),
     localeOnChange: () => () => {},
+    launchCurrent: () => mockLaunch(config),
     analyticsAvailable: () => true,
     logAnalytics,
     async call(method, params = {}) {

@@ -296,6 +296,15 @@ export type GRushLocale = {
 };
 
 /**
+ * 起動パラメータ。GameRush の URL に `gp.` を付けて載せたキーと値（`?gp.item=sword` なら
+ * `{ item: "sword" }`）。キーは英数字と `_-` で 32 文字まで（`__proto__` は使えない）、
+ * 値は英数字と `._~:,-` で 128 文字まで、8 個まで。形の合わないものは GameRush が落とす。
+ */
+export type GRushLaunch = {
+  params: Record<string, string>;
+};
+
+/**
  * 分析イベントの custom field。3つまで。キーは英数字と `_` で 32 文字まで。値は1行のテキストで
  * 40 文字（コードポイント）まで。改行と制御文字は空白に直してから数え、直した結果が空の値は拒まれる。
  */
@@ -409,6 +418,8 @@ export type GRushMockConfig = {
   shareAvailable: boolean;
   shareStatus: GRushShareStatus;
   locale: string | null;
+  /** `launch` が返す起動パラメータ。モックは GameRush の制限で確かめずにそのまま返す。 */
+  launchParams: Record<string, string>;
 };
 
 export interface GRushMockPeer {
@@ -615,6 +626,23 @@ export interface GRushSdk {
     get(): Promise<GRushResult<GRushLocale>>;
     current(): GRushLocale | null;
     onChange(handler: (locale: GRushLocale) => void): () => void;
+  };
+  /**
+   * 起動パラメータ。シェアしたリンクから特定のアイテムやステージへ飛ばすのに使う。
+   *
+   * 値は誰でも作れるリンクから来る。存在するか・持っているか・解放済みかをゲームの側で確かめてから使い、
+   * 確かめられなければ無視する。
+   *
+   * 渡るのは、プレイヤーが最初に開いたスライドのゲームだけ。別のゲームへスワイプして戻ったときは空。
+   * フィードではページを読み直すと空になるが、単体表示や埋め込みでは読み直すと同じ値がまた渡ることが
+   * あるので、何度渡っても困らないように書く。`protocolVersion` 8 未満の GameRush と GameRush の外では、`get` は
+   * `unsupported`、`current` は `null`。
+   */
+  launch: {
+    /** 起動パラメータが届くまで待って返す。パラメータの無い起動では `params` が空。 */
+    get(): Promise<GRushResult<GRushLaunch>>;
+    /** 届いていれば起動パラメータ、まだなら `null`（同期。結果オブジェクトではない）。 */
+    current(): GRushLaunch | null;
   };
   /**
    * 作者のアナリティクスへ送るイベント。ほかの API と違い、どれも同期で `boolean` を返し、例外を投げない。

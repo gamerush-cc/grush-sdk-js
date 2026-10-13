@@ -47,6 +47,13 @@ async function useSdk(): Promise<void> {
   void langs;
   stop();
 
+  const launched = await GRush.launch.get();
+  const item: string | undefined = launched.ok ? launched.value.params.item : undefined;
+  const params: Record<string, string> | undefined = GRush.launch.current()?.params;
+  void item;
+  void params;
+  GRush.mock.config.launchParams = { item: "sword" };
+
   const loaded = await GRush.cloudSave.load("default", { fallback: "local" });
   if (loaded.ok && loaded.value) {
     const storage: "cloud" | "local" = loaded.value.storage;

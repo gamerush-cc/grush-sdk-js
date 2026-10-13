@@ -7,6 +7,7 @@ import {
   countOf,
   flagOf,
   inboxPageOf,
+  launchOf,
   leaderboardDefinitionOf,
   leaderboardPageOf,
   localeOf,
@@ -22,7 +23,7 @@ import {
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.8.0";
+export const VERSION = "0.9.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
@@ -33,6 +34,7 @@ const ANALYTICS_PROTOCOL_VERSION = 6;
 const MATCHMAKING_PROTOCOL_VERSION = 7;
 const INBOX_PROTOCOL_VERSION = 7;
 const TRADE_PROTOCOL_VERSION = 7;
+const LAUNCH_PROTOCOL_VERSION = 8;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -303,6 +305,20 @@ export function createGRush(options = {}) {
     },
   };
 
+  // Launch parameters arrive once, with the slide the player opened first, so there is no onChange.
+  const launch = {
+    get: () => mapped("launch.get", undefined, required(launchOf), LAUNCH_PROTOCOL_VERSION),
+    current() {
+      const active = backend();
+      if (!active.isAvailable() || active.protocolVersion() < LAUNCH_PROTOCOL_VERSION) return null;
+      try {
+        return launchOf(active.launchCurrent?.());
+      } catch {
+        return null;
+      }
+    },
+  };
+
   // Analytics answers synchronously with a boolean and never throws, so a game can log from anywhere
   // without awaiting. An older GameRush or a page outside GameRush answers false.
   function analyticsBackend() {
@@ -412,6 +428,7 @@ export function createGRush(options = {}) {
     cloudSave,
     share,
     locale,
+    launch,
     analytics,
     net,
     mock: mockBackend.controls,
