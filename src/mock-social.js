@@ -290,7 +290,8 @@ export function createMockSocial({ config, selfId, isKnownPlayer, now = () => Da
     expireDue();
     const open = trades.filter((trade) => trade.from === self && trade.status === "open");
     if (open.length >= MAX_OPEN_TRADES) {
-      return failure(CODES.rateLimited, "Too many open trades.");
+      // GameRush と同じく、待っても直らない上限なので rateLimited にしない。
+    return failure(CODES.invalidParams, "Too many open trades. Cancel an open trade first.");
     }
     return ok(tradeWire(openTrade(self, p)));
   }

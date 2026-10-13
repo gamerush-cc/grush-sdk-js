@@ -514,7 +514,11 @@ export interface GRushSdk {
    * 利用者どうしの文章や画像のやりとりには使わない。`protocolVersion` 7 未満の GameRush では `unsupported`。
    */
   inbox: {
-    /** 詰めた JSON で 1KB までの `payload` を送る。`kind` は `^[A-Za-z0-9._:-]{1,32}$`。 */
+    /**
+     * 詰めた JSON で 1KB までの `payload` を送る。`kind` は `^[A-Za-z0-9._:-]{1,32}$`。
+     * 同じゲームの疑似 ID でない宛先は `invalidParams`、送りすぎ（毎時・毎日の上限）は `rateLimited` で、時間が経てば
+     * 回復する。待つ時間が分かれば `retryAfterMs` が入る。
+     */
     send(to: string, kind: string, payload: GRushPayloadObject): Promise<GRushResult<boolean>>;
     list(options?: GRushInboxListOptions): Promise<GRushResult<GRushInboxPage>>;
     /** 既読にし、更新した件数を返す（50 件まで）。 */
@@ -543,6 +547,10 @@ export interface GRushSdk {
    * `protocolVersion` 7 未満の GameRush では `unsupported`。
    */
   trade: {
+    /**
+     * 受付中の出品が 10 件あるときは `invalidParams`（待っても直らない。取り下げるか、成立・期限切れを待つ）。
+     * 毎日 30 件の出品の上限は `rateLimited` で、時間が経てば回復する。待つ時間が分かれば `retryAfterMs` が入る。
+     */
     create(options: GRushTradeCreateOptions): Promise<GRushResult<GRushTrade>>;
     list(options?: GRushTradeListOptions): Promise<GRushResult<GRushTradePage>>;
     mine(): Promise<GRushResult<GRushMyTrades>>;

@@ -931,7 +931,7 @@ function createMockSocial({ config, selfId, isKnownPlayer, now = () => Date.now(
     expireDue();
     const open = trades.filter((trade) => trade.from === self && trade.status === "open");
     if (open.length >= MAX_OPEN_TRADES) {
-      return failure(CODES.rateLimited, "Too many open trades.");
+      return failure(CODES.invalidParams, "Too many open trades. Cancel an open trade first.");
     }
     return ok(tradeWire(openTrade(self, p)));
   }

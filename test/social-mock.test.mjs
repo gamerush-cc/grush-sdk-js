@@ -270,7 +270,7 @@ test("trade creation follows GameRush's limits", async () => {
   for (let index = 0; index < 10; index += 1) {
     assert.equal((await sdk.trade.create({ ...base, operationId: `n-${index}` })).ok, true);
   }
-  assert.equal((await sdk.trade.create({ ...base, operationId: "n-10" })).code, "rateLimited");
+  assert.equal((await sdk.trade.create({ ...base, operationId: "n-10" })).code, "invalidParams");
 });
 
 test("trade reports need sign-in and a listing you can see", async () => {
