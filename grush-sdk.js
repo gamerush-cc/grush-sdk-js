@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.9.0 */
+/*! GameRush SDK for JavaScript v0.10.0 */
 "use strict";
 (() => {
   // src/analytics-rules.js
@@ -1104,7 +1104,7 @@
   // src/backend-mock.js
   var MANIFEST_TIMEOUT_MS = 3e3;
   var MOCK_ANALYTICS_MAX_EVENTS = 200;
-  var MOCK_PROTOCOL_VERSION = 8;
+  var MOCK_PROTOCOL_VERSION = 9;
   var STORAGE_KEY = "grush-sdk-mock";
   var SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
   var PLAYER_STATE_MAX_BYTES = 4 * 1024;
@@ -1132,6 +1132,21 @@
         Object.entries(params).filter(([, value]) => typeof value === "string")
       )
     };
+  }
+  var SHARE_LAUNCH_KEY = /^[A-Za-z0-9_-]{1,32}$/;
+  var SHARE_LAUNCH_VALUE = /^[A-Za-z0-9._~:,-]{0,128}$/;
+  var SHARE_LAUNCH_MAX_PARAMS = 8;
+  function shareLaunchParamsValid(value) {
+    if (value === void 0 || value === null) return true;
+    if (typeof value !== "object" || Array.isArray(value)) return false;
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return false;
+    const keys = Object.keys(value);
+    if (Reflect.ownKeys(value).length !== keys.length) return false;
+    if (keys.length > SHARE_LAUNCH_MAX_PARAMS) return false;
+    return keys.every(
+      (key) => SHARE_LAUNCH_KEY.test(key) && key !== "__proto__" && typeof value[key] === "string" && SHARE_LAUNCH_VALUE.test(value[key])
+    );
   }
   function deviceLanguages() {
     const list = globalThis.navigator?.languages;
@@ -1512,7 +1527,10 @@
       "cloudSave.load": loadCloud,
       "cloudSave.save": saveCloud,
       "cloudSave.remove": removeCloud,
-      "share.open": () => {
+      "share.open": (p) => {
+        if (!shareLaunchParamsValid(p.launchParams)) {
+          return failure(CODES.invalidParams, "Invalid launch params.");
+        }
         if (!config.shareAvailable) return failure(CODES.unavailable, "Sharing is unavailable here.");
         return ok({ status: config.shareStatus === "cancelled" ? "cancelled" : "opened" });
       },
@@ -2076,7 +2094,7 @@
   }
 
   // src/sdk.js
-  var VERSION = "0.9.0";
+  var VERSION = "0.10.0";
   var REQUIRED_PROTOCOL_VERSION = 1;
   var PLAYER_STATE_PROTOCOL_VERSION = 2;
   var SHARE_PROTOCOL_VERSION = 3;
@@ -2087,6 +2105,7 @@
   var INBOX_PROTOCOL_VERSION = 7;
   var TRADE_PROTOCOL_VERSION = 7;
   var LAUNCH_PROTOCOL_VERSION = 8;
+  var SHARE_LAUNCH_PROTOCOL_VERSION = 9;
   var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
   var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
   var noneBackend = {
@@ -2095,6 +2114,10 @@
     protocolVersion: () => 0,
     call: async () => unsupported()
   };
+  function hasLaunchParams(value) {
+    if (value === void 0 || value === null) return false;
+    return typeof value !== "object" || Reflect.ownKeys(value).length > 0;
+  }
   function isLocalDevelopment() {
     const location = globalThis.location;
     if (!location) return false;
@@ -2280,7 +2303,14 @@
         const params = {};
         if (opts.text !== void 0) params.text = opts.text;
         if (opts.image !== void 0) params.image = opts.image;
-        return mapped("share.open", params, required(shareResultOf), SHARE_PROTOCOL_VERSION);
+        const withLaunchParams = hasLaunchParams(opts.launchParams);
+        if (withLaunchParams) params.launchParams = opts.launchParams;
+        return mapped(
+          "share.open",
+          params,
+          required(shareResultOf),
+          withLaunchParams ? SHARE_LAUNCH_PROTOCOL_VERSION : SHARE_PROTOCOL_VERSION
+        );
       },
       async isAvailable() {
         const result = await call("share.getAvailability", void 0, SHARE_PROTOCOL_VERSION);

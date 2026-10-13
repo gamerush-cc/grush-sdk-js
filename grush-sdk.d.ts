@@ -284,7 +284,23 @@ export type GRushShareImage =
   | { base64: string; mimeType: string }
   | "screen";
 
-export type GRushShareOptions = { text?: string; image?: GRushShareImage };
+export type GRushShareOptions = {
+  text?: string;
+  image?: GRushShareImage;
+  /**
+   * 共有リンクに添える起動パラメータ。受け取った人がリンクを開くと、ゲームの `launch` に渡る
+   * （`{ stage: "3" }` ならリンクに `?gp.stage=3` が付く）。キーは英数字と `_-` で 32 文字まで
+   * （`__proto__` は使えない）、値は英数字と `._~:,-` で 128 文字まで（空も可）、8 個まで。1つでも
+   * 合わなければ共有を開かずに `invalidParams`。空のオブジェクトは渡さないときと同じ。
+   *
+   * `protocolVersion` 9 未満の GameRush では、空でなければ共有を開かずに `unsupported` を返す。
+   * パラメータを外して呼び直せば共有できる。
+   *
+   * リンクは誰にでも見え、そのまま転送されるので、プレイヤーを識別できる値（招待コードなど）を入れない。
+   * 受け取る側のゲームは値を信用せず、確かめてから使う。
+   */
+  launchParams?: Record<string, string>;
+};
 export type GRushShareStatus = "opened" | "cancelled";
 export type GRushShareResult = { status: GRushShareStatus };
 

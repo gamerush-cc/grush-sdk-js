@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.9.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.10.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -66,7 +66,7 @@ TypeScript の型は `grush-sdk.d.ts`。
 | `GRush.inbox.send(to, kind, payload)` / `list({ unreadOnly, limit, cursor })` / `markRead(ids)` / `remove(ids)` / `report(messageId)` | `true` / `{ messages, unreadCount, nextCursor }` / 件数 / 件数 / 承諾されたか（下記） |
 | `GRush.trade.create({ offer, want, offerKey, wantKey, to, expiresInSec, operationId })` / `list(...)` / `mine()` / `accept(tradeId, give)` / `cancel(tradeId)` / `ack(ids)` / `report(tradeId)` | 出品 / `{ trades, nextCursor }` / `{ open, pending }` / `{ outcome, trade }` / 出品 / 件数 / 承諾されたか（下記） |
 | `GRush.cloudSave.load(slot, { fallback })` / `save(payload, slot, { baseRevision, fallback })` / `remove(slot, { fallback })` | `{ slot, payload, revision, createdAt, updatedAt, storage }` など（下記） |
-| `GRush.share.share({ text, image })` | `{ status: "opened" \| "cancelled" }`（下記） |
+| `GRush.share.share({ text, image, launchParams })` | `{ status: "opened" \| "cancelled" }`（下記） |
 | `GRush.share.isAvailable()` | `true` / `false`（結果オブジェクトではなく真偽値。失敗しない） |
 | `GRush.locale.get()` | `{ locale, source, languages }`（下記） |
 | `GRush.locale.current()` | 同じ形、または `null`（同期。結果オブジェクトではない） |
@@ -199,6 +199,18 @@ if (await GRush.share.isAvailable()) {
 - 本文は 100 文字まで。URL と @メンションを含むと `invalidParams`。添付される URL は GameRush がゲームのページから作り、ゲームからは指定できない
 - 古い GameRush（`protocolVersion` 3 未満）では `unsupported`
 
+#### 起動パラメータを添える
+
+```js
+const shared = await GRush.share.share({ text: "ステージ3に挑戦", launchParams: { stage: "3" } });
+if (!shared.ok && shared.code === "unsupported") await GRush.share.share({ text: "ステージ3に挑戦" });
+```
+
+- 添えた値は共有リンクに `?gp.stage=3` のように載り、リンクを開いた人のゲームの `GRush.launch` に渡る（下の「起動パラメータ」）
+- キーと値の制限は「起動パラメータ」と同じ。1つでも合わなければ、共有を開かずに `invalidParams`。空のオブジェクトは渡さないときと同じ
+- 古い GameRush（`protocolVersion` 9 未満）では、共有を開かずに `unsupported`。`launchParams` を外して呼び直せば共有できる
+- **リンクは誰にでも見え、そのまま転送される。** プレイヤーを識別できる値（招待コードなど）を入れない。受け取る側のゲームは値を信用せず、確かめてから使う
+
 ### 表示言語
 
 ```js
@@ -298,9 +310,9 @@ if (GRush.backend === "mock") {
 
 `GRush.mock.raiseRoomError(code, message)` は、自分がいる部屋に `error` を届ける（本番と同じく非同期で、部屋は閉じない）。部屋にいなければ `false` を返す。
 
-モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
+モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。`launchParams` は GameRush と同じ制限で確かめ、合わなければ `invalidParams`。本文と画像の検査はしないので、弾かれる本文は GameRush 上で確かめる。
 
-アナリティクスのモックは、GameRush と同じ検査をして、通ったイベントを1件ずつコンソールに出し、直近の 200 件を `GRush.mock.analyticsEvents()` で返す（`reset()` で空になる）。弾いたイベントは、GameRush と同じく理由ごとに1回だけコンソールに警告する（`reset()` でまた出る）。どこへも送らない。前面に出るまでの 30 件の溜め・本体の上限・同じステップを最初の1回だけ残す扱い・セッションあたりの上限は再現しないので、モックでは `true` の分がすべて記録に残る。モックが名乗る `protocolVersion` は 8。
+アナリティクスのモックは、GameRush と同じ検査をして、通ったイベントを1件ずつコンソールに出し、直近の 200 件を `GRush.mock.analyticsEvents()` で返す（`reset()` で空になる）。弾いたイベントは、GameRush と同じく理由ごとに1回だけコンソールに警告する（`reset()` でまた出る）。どこへも送らない。前面に出るまでの 30 件の溜め・本体の上限・同じステップを最初の1回だけ残す扱い・セッションあたりの上限は再現しないので、モックでは `true` の分がすべて記録に残る。モックが名乗る `protocolVersion` は 9。
 
 相手探し・受信箱・交換所のモックは、`GRush.mock.rivals` の 3 人の相手を持つ。相手はそれぞれ rating 付きの公開プレイヤー状態を持ち、届いたメッセージを同じ `kind` と `payload` で送り返す。はじめと `reset()` の後は、最初の相手からのメッセージ1通と、相手の受付中の出品を2件持つ。payload・offer・want・give の形、`operationId` での冪等、受付中の出品の上限、受諾の `outcome`、`pending` と `ack` は GameRush と同じ規則で動く。通報を承諾すると（`confirmInboxReport` / `confirmTradeReport`、既定 `true`）相手をブロックし、その相手のメッセージと出品は見えなくなる。
 

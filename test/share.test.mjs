@@ -127,3 +127,95 @@ test("outside GameRush share degrades to unsupported", async () => {
   assert.equal((await sdk.share.share({ text: "x" })).code, "unsupported");
   assert.equal(await sdk.share.isAvailable(), false);
 });
+
+test("share passes launchParams through to the runtime at protocol 9", async () => {
+  installRuntime(recordingShare(), 9);
+  const shared = await sdk.share.share({
+    text: "clear",
+    launchParams: { stage: "3", item: "sword" },
+  });
+  assert.equal(shared.value.status, "opened");
+  assert.deepEqual(calls.at(-1), { text: "clear", launchParams: { stage: "3", item: "sword" } });
+});
+
+test("share leaves out empty launchParams so older runtimes still share", async () => {
+  installRuntime(recordingShare(), 3);
+  assert.equal((await sdk.share.share({ text: "clear", launchParams: {} })).value.status, "opened");
+  assert.deepEqual(calls.at(-1), { text: "clear" });
+  assert.equal((await sdk.share.share({ text: "clear", launchParams: null })).ok, true);
+  assert.deepEqual(calls.at(-1), { text: "clear" });
+});
+
+test("share with launchParams is unsupported below protocol 9 and does not open", async () => {
+  installRuntime(recordingShare(), 8);
+  const shared = await sdk.share.share({ text: "clear", launchParams: { stage: "3" } });
+  assert.equal(shared.ok, false);
+  assert.equal(shared.code, "unsupported");
+  assert.equal(calls.length, 0);
+  assert.equal((await sdk.share.share({ text: "clear" })).ok, true);
+});
+
+test("share passes malformed launchParams on so GameRush answers invalidParams", async () => {
+  installRuntime(
+    {
+      share: (options) => {
+        calls.push(options);
+        return rejection("invalidParams", "Invalid launch params.");
+      },
+      isAvailable: () => Promise.resolve(true),
+    },
+    9,
+  );
+  const shared = await sdk.share.share({ launchParams: { "bad key": "x" } });
+  assert.equal(shared.code, "invalidParams");
+  assert.deepEqual(calls.at(-1), { launchParams: { "bad key": "x" } });
+  assert.equal((await sdk.share.share({ launchParams: "stage=3" })).code, "invalidParams");
+});
+
+test("share maps a runtime that does not know launchParams to unsupported", async () => {
+  installRuntime(
+    {
+      share: () => rejection("unsupportedMethod", "old host"),
+      isAvailable: () => Promise.resolve(true),
+    },
+    9,
+  );
+  assert.equal((await sdk.share.share({ launchParams: { stage: "3" } })).code, "unsupported");
+});
+
+test("the mock checks launchParams like GameRush", async () => {
+  globalThis.location = { protocol: "http:", hostname: "localhost" };
+  const valid = {
+    a: "",
+    "b-1_X": "A.b_c~d:e,f-0",
+    c: "x".repeat(128),
+    d: "1",
+    e: "2",
+    f: "3",
+    g: "4",
+    h: "5",
+  };
+  assert.equal((await sdk.share.share({ text: "x", launchParams: valid })).value.status, "opened");
+  assert.equal((await sdk.share.share({ launchParams: {} })).ok, true);
+  const invalid = [
+    { "bad key": "x" },
+    { ["k".repeat(33)]: "x" },
+    { "": "x" },
+    { stage: "a b" },
+    { stage: "x".repeat(129) },
+    { stage: "ステージ" },
+    { stage: 3 },
+    { stage: null },
+    { ...valid, i: "6" },
+    JSON.parse('{"__proto__":"x"}'),
+    ["3"],
+    "stage=3",
+  ];
+  for (const launchParams of invalid) {
+    const shared = await sdk.share.share({ launchParams });
+    assert.equal(shared.code, "invalidParams", JSON.stringify(launchParams));
+  }
+  sdk.mock.config.shareAvailable = false;
+  assert.equal((await sdk.share.share({ launchParams: { stage: "a b" } })).code, "invalidParams");
+  assert.equal((await sdk.share.share({ launchParams: { stage: "3" } })).code, "unavailable");
+});
