@@ -122,3 +122,70 @@ test("outside GameRush locale degrades to unsupported", async () => {
   assert.equal(sdk.locale.current(), null);
   sdk.locale.onChange(() => {})();
 });
+
+test("locale fills a missing source and empty languages the same way as the other SDKs", async () => {
+  installRuntime(fakeLocale({ locale: "en" }));
+  assert.deepEqual((await sdk.locale.get()).value, {
+    locale: "en",
+    source: "device",
+    languages: ["en"],
+  });
+  globalThis.GRushLocale = fakeLocale({ locale: "ko", source: "", languages: [null, ""] });
+  assert.deepEqual(sdk.locale.current(), { locale: "ko", source: "device", languages: ["ko"] });
+});
+
+test("locale.onChange moves to the web runtime when configure switches from the mock", () => {
+  const runtime = fakeLocale(JA);
+  installRuntime(runtime);
+  sdk.configure({ backend: "mock" });
+  const seen = [];
+  const stop = sdk.locale.onChange((value) => seen.push(value));
+  assert.equal(runtime.listeners.length, 0);
+
+  sdk.configure({ backend: "web" });
+  assert.equal(runtime.listeners.length, 1);
+  runtime.listeners[0]({ locale: "en", source: "user", languages: ["en"] });
+  assert.deepEqual(seen, [{ locale: "en", source: "user", languages: ["en"] }]);
+
+  stop();
+  assert.equal(runtime.listeners.length, 0);
+});
+
+test("locale.onChange leaves the web runtime when configure switches to the mock", () => {
+  const runtime = fakeLocale(JA);
+  installRuntime(runtime);
+  sdk.configure({ backend: "web" });
+  sdk.locale.onChange(() => {});
+  sdk.locale.onChange(() => {});
+  assert.equal(runtime.listeners.length, 1);
+
+  sdk.configure({ backend: "mock" });
+  assert.equal(runtime.listeners.length, 0);
+});
+
+test("locale.onChange delivers each change once to every handler, even when one throws", () => {
+  const runtime = fakeLocale(JA);
+  installRuntime(runtime);
+  const first = [];
+  const second = [];
+  sdk.locale.onChange((value) => first.push(value));
+  sdk.locale.onChange(() => {
+    throw new Error("boom");
+  });
+  sdk.locale.onChange((value) => second.push(value));
+  assert.equal(runtime.listeners.length, 1);
+
+  const deferred = [];
+  const original = globalThis.queueMicrotask;
+  globalThis.queueMicrotask = (task) => deferred.push(task);
+  try {
+    runtime.listeners[0]({ locale: "en", source: "user", languages: ["en"] });
+  } finally {
+    globalThis.queueMicrotask = original;
+  }
+  assert.deepEqual(first, [{ locale: "en", source: "user", languages: ["en"] }]);
+  assert.deepEqual(second, first);
+  assert.notEqual(first[0], second[0]);
+  assert.equal(deferred.length, 1);
+  assert.throws(deferred[0], /boom/);
+});

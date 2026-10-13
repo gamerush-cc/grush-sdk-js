@@ -625,6 +625,10 @@ export interface GRushSdk {
   locale: {
     get(): Promise<GRushResult<GRushLocale>>;
     current(): GRushLocale | null;
+    /**
+     * 表示言語が変わったときに `handler` を呼ぶ。返り値は解除関数。
+     * `configure({ backend })` でバックエンドを切り替えても購読は続く。
+     */
     onChange(handler: (locale: GRushLocale) => void): () => void;
   };
   /**
