@@ -299,6 +299,17 @@ test("rooms wrap the runtime room and normalize its events", async () => {
   assert.equal(room.isHost(), true);
   assert.equal(room.peers.length, 3);
 
+  const errors = [];
+  room.on("error", (event) => errors.push(event));
+  runtimeRoom.fire("error", { code: "rateLimited", message: "m" });
+  runtimeRoom.fire("error", { code: 7, message: null });
+  assert.deepEqual(errors, [
+    { code: "rateLimited", message: "m" },
+    { code: "", message: "" },
+  ]);
+  assert.equal(room.isClosed, false);
+  assert.equal(sdk.net.room, room);
+
   const closes = [];
   room.on("close", (event) => closes.push(event.reason));
   runtimeRoom.fire("close", { reason: "kicked" });

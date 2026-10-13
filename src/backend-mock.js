@@ -508,6 +508,7 @@ export function createMockBackend(config) {
     expireTrade: social.controls.expireTrade,
     addPeer: (displayName, avatarUrl) => net.addPeer(displayName, avatarUrl),
     removePeer: (peer) => net.removePeer(peer),
+    raiseRoomError: (code, message) => net.raiseError(code, message),
     analyticsEvents: () => structuredClone(analyticsEvents),
     reset() {
       leaderboards.reset();

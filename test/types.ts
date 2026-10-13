@@ -20,6 +20,12 @@ async function useSdk(): Promise<void> {
     const index: number = event.index;
     void index;
   });
+  room.on("error", (event) => {
+    const code: string = event.code;
+    const message: string = event.message;
+    void code;
+    void message;
+  });
   room.send(new Uint8Array([1]), { channel: GRush.CHANNEL_UNRELIABLE, to: GRush.EVERYONE });
 
   if (await GRush.share.isAvailable()) {
@@ -129,6 +135,8 @@ async function useSdk(): Promise<void> {
   if (listing) local.mock.expireTrade(listing.id);
   local.mock.config.confirmTradeReport = false;
   local.mock.definePlayerState("p9", { level: 1 }, { rating: 1200 });
+  const raised: boolean = local.mock.raiseRoomError("rateLimited", "m");
+  void raised;
   local.mock.config.shareStatus = "cancelled";
   local.mock.defineLeaderboard("score", { sort: "asc", minValue: 0 });
   local.mock.defineLeaderboard("daily", { period: "daily", enabled: false });

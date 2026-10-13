@@ -174,6 +174,12 @@ export function createMockNet(config, localPeerWire) {
     return { source, info };
   }
 
+  function raiseError(code, message) {
+    if (localIndex < 0) return false;
+    announceToLocal("error", { code: String(code), message: String(message) });
+    return true;
+  }
+
   function reset() {
     for (const peer of members.values()) peer.listeners.clear();
     members.clear();
@@ -183,7 +189,7 @@ export function createMockNet(config, localPeerWire) {
     hostIndex = -1;
   }
 
-  return { join, addPeer, removePeer, reset };
+  return { join, addPeer, removePeer, raiseError, reset };
 }
 
 function withDecoders(message) {

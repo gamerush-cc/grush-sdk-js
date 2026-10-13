@@ -85,6 +85,22 @@ test("unreliable messages can be dropped and oversized ones are refused", async 
   assert.equal(room.send({ not: "bytes" }).code, "invalidParams");
 });
 
+test("raiseRoomError reaches the room later and leaves it open", async () => {
+  sdk.mock.reset();
+  assert.equal(sdk.mock.raiseRoomError("rateLimited", "outside"), false);
+  const room = (await sdk.net.join()).value;
+  const errors = [];
+  room.on("error", (event) => errors.push(event));
+  assert.equal(sdk.mock.raiseRoomError("messageTooLarge", "too big"), true);
+  assert.deepEqual(errors, []);
+  await flush();
+  assert.deepEqual(errors, [{ code: "messageTooLarge", message: "too big" }]);
+  assert.equal(room.isClosed, false);
+  assert.equal(room.send("still open").ok, true);
+  await room.leave();
+  assert.equal(sdk.mock.raiseRoomError("rateLimited", "after leave"), false);
+});
+
 test("joining again closes the previous room with reason replaced", async () => {
   sdk.mock.reset();
   const first = (await sdk.net.join()).value;

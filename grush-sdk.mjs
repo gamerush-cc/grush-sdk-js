@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.7.0 */
+/*! GameRush SDK for JavaScript v0.8.0 */
 
 // src/analytics-rules.js
 var ANALYTICS_EVENT_KINDS = ["onboarding", "funnel", "custom", "economy"];
@@ -618,6 +618,11 @@ function createMockNet(config, localPeerWire) {
     };
     return { source, info };
   }
+  function raiseError(code, message) {
+    if (localIndex < 0) return false;
+    announceToLocal("error", { code: String(code), message: String(message) });
+    return true;
+  }
   function reset() {
     for (const peer of members.values()) peer.listeners.clear();
     members.clear();
@@ -626,7 +631,7 @@ function createMockNet(config, localPeerWire) {
     roomCode = "";
     hostIndex = -1;
   }
-  return { join, addPeer, removePeer, reset };
+  return { join, addPeer, removePeer, raiseError, reset };
 }
 function withDecoders(message) {
   return {
@@ -1521,6 +1526,7 @@ function createMockBackend(config) {
     expireTrade: social.controls.expireTrade,
     addPeer: (displayName, avatarUrl) => net.addPeer(displayName, avatarUrl),
     removePeer: (peer) => net.removePeer(peer),
+    raiseRoomError: (code, message) => net.raiseError(code, message),
     analyticsEvents: () => structuredClone(analyticsEvents),
     reset() {
       leaderboards.reset();
@@ -1880,7 +1886,7 @@ function localeOf(raw) {
 }
 
 // src/room.js
-var EVENTS = ["message", "peerjoin", "peerleave", "host", "transportchange", "close"];
+var EVENTS = ["message", "peerjoin", "peerleave", "host", "transportchange", "error", "close"];
 function createRoom(source, info, onClosed) {
   const listeners = new Map(EVENTS.map((name) => [name, []]));
   const lastSeq = /* @__PURE__ */ new Map();
@@ -1947,6 +1953,12 @@ function createRoom(source, info, onClosed) {
     transportchange(raw) {
       if (typeof raw?.transport === "string") transport = raw.transport;
       emit("transportchange", { transport });
+    },
+    error(raw) {
+      emit("error", {
+        code: typeof raw?.code === "string" ? raw.code : "",
+        message: typeof raw?.message === "string" ? raw.message : ""
+      });
     },
     close(raw) {
       markClosed(typeof raw?.reason === "string" ? raw.reason : "");
@@ -2038,7 +2050,7 @@ function createRoom(source, info, onClosed) {
 }
 
 // src/sdk.js
-var VERSION = "0.7.0";
+var VERSION = "0.8.0";
 var REQUIRED_PROTOCOL_VERSION = 1;
 var PLAYER_STATE_PROTOCOL_VERSION = 2;
 var SHARE_PROTOCOL_VERSION = 3;

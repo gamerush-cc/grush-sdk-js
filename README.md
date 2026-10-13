@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.7.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.8.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -246,6 +246,7 @@ if (joined.ok) {
     console.log(message.from, message.json());
   });
   room.on("peerjoin", (peer) => console.log("joined", peer.index));
+  room.on("error", ({ code, message }) => console.warn("dropped", code, message));
   room.on("close", ({ reason }) => console.log("closed", reason));
   room.sendJson({ x: 1, y: 2 }, { channel: GRush.CHANNEL_UNRELIABLE });
 }
@@ -255,6 +256,7 @@ if (joined.ok) {
 - `channel: "unreliable"` は落ちる・順序が入れ替わる前提で書く。いまの中継では落ちないが、WebRTC へ切り替わった時点で落ち始める
 - `to` に peer の `index` を渡すとその相手だけへ送る。省略すると全員
 - `join` をもう一度呼ぶと、前の部屋は `close`（reason `"replaced"`）になる
+- 部屋が1通を捨てると `error` が届く。`code` は `"messageTooLarge"`・`"rateLimited"`・`"badFrame"` で、ほかの値が届くこともある。部屋はつながったままで、続けて送れる。部屋が閉じるときは `close` だけが届く
 - 部屋のプロパティ: `peers` / `localPeerId` / `hostPeerId` / `isHost()` / `transport` / `serverTimeMs()` / `lastSeqFrom(peerId)` / `isClosed`
 
 ## ローカルでの動作確認
@@ -274,6 +276,8 @@ if (GRush.backend === "mock") {
   bot.on("message", (message) => bot.send(message.payload));
 }
 ```
+
+`GRush.mock.raiseRoomError(code, message)` は、自分がいる部屋に `error` を届ける（本番と同じく非同期で、部屋は閉じない）。部屋にいなければ `false` を返す。
 
 モックは実サーバと同じ縛り（宣言していない key への投稿・値域外・int の枠への小数・公開プレイヤー状態の 4KB と base64 らしい文字列・ゲストのクラウドセーブと通報・部屋コードの形式）で弾く。有効プレイ 10 秒未満の投稿と投稿頻度の上限は再現しない。`signedIn: false` のとき `fallback: "local"` 付きのクラウドセーブは、モックの中の端末の保存先に読み書きし（`reset()` で消える）、`signedIn` を `true` に戻すとクラウドへ書けるようになる。共有は確認シートを出さず、`shareStatus`（既定 `"opened"`）をそのまま返す。本文と画像の検査もしないので、弾かれる本文は GameRush 上で確かめる。
 

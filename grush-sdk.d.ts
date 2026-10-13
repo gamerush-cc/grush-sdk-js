@@ -365,8 +365,13 @@ export type GRushRoomEvents = {
   peerleave: { index: number };
   host: { index: number };
   transportchange: { transport: string };
+  /** 部屋が1通を捨てたときに届く。部屋はつながったままで、続けて送れる。 */
+  error: { code: GRushRoomErrorCode; message: string };
   close: { reason: string };
 };
+
+/** 部屋が1通を捨てた理由。ここに無いコードが届くこともある。 */
+export type GRushRoomErrorCode = "messageTooLarge" | "rateLimited" | "badFrame" | (string & {});
 
 export interface GRushRoom {
   readonly roomId: string;
@@ -458,6 +463,11 @@ export interface GRushMock {
   expireTrade(tradeId: string): boolean;
   addPeer(displayName: string, avatarUrl?: string | null): GRushMockPeer | null;
   removePeer(peer: GRushMockPeer): void;
+  /**
+   * 自分がいる部屋に、部屋が1通を捨てたときの `error` を届ける。届け方は本番と同じく非同期で、
+   * 部屋は閉じない。部屋にいなければ何もせず `false` を返す。
+   */
+  raiseRoomError(code: GRushRoomErrorCode, message: string): boolean;
   /** モックが受けた分析イベントの写し。直近の 200 件を古い順に返す。`reset()` で空になる。 */
   analyticsEvents(): GRushAnalyticsEvent[];
   reset(): void;

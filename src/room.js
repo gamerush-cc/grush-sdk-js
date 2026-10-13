@@ -2,7 +2,7 @@ import { decodeJson, decodeText, MAX_MESSAGE_BYTES, toBytes } from "./bytes.js";
 import { peerOf } from "./normalize.js";
 import { CODES, failure, failureFromError, ok } from "./result.js";
 
-const EVENTS = ["message", "peerjoin", "peerleave", "host", "transportchange", "close"];
+const EVENTS = ["message", "peerjoin", "peerleave", "host", "transportchange", "error", "close"];
 
 export function createRoom(source, info, onClosed) {
   const listeners = new Map(EVENTS.map((name) => [name, []]));
@@ -72,6 +72,12 @@ export function createRoom(source, info, onClosed) {
     transportchange(raw) {
       if (typeof raw?.transport === "string") transport = raw.transport;
       emit("transportchange", { transport });
+    },
+    error(raw) {
+      emit("error", {
+        code: typeof raw?.code === "string" ? raw.code : "",
+        message: typeof raw?.message === "string" ? raw.message : "",
+      });
     },
     close(raw) {
       markClosed(typeof raw?.reason === "string" ? raw.reason : "");
