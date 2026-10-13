@@ -1,6 +1,6 @@
 # GameRush SDK for JavaScript
 
-GameRush の GameAPI（ランキング・公開プレイヤー状態と相手探し・受信箱・交換所・クラウドセーブ・共有・アナリティクス・リアルタイム対戦）を、素の `index.html` のゲームから呼ぶためのラッパー。バンドラ不要で、script タグ 1 行でも ES Modules の `import` でも使える。使い方の正（投稿が弾かれる条件とエラーコード・API トークン）は [SDK ガイド](https://gamerush.jp/sdk)。
+GameRush の GameAPI（ランキング・公開プレイヤー状態と相手探し・受信箱・交換所・クラウドセーブ・共有・表示言語・起動パラメータ・アナリティクス・リアルタイム対戦）を、素の `index.html` のゲームから呼ぶためのラッパー。バンドラ不要で、script タグ 1 行でも ES Modules の `import` でも使える。使い方の正（投稿が弾かれる条件とエラーコード・API トークン）は [SDK ガイド](https://gamerush.jp/sdk)。
 
 GameRush はアップロードされた全ビルドへランタイム JS（`window.GRushPlayer` など）を注入している。この SDK はその上に薄く乗り、次の 3 つを足す。
 
@@ -237,10 +237,10 @@ if (item && ownsItem(item)) openItem(item);
 ```
 
 - **値を信用しない。** リンクは誰でも作れる。アイテムが存在するか・プレイヤーが持っているか・ステージが解放済みかをゲームの側で確かめ、確かめられなければ無視する
-- キーは英数字と `_-` で 32 文字まで（`__proto__` は使えない）、値は英数字と `._~:,-` で 128 文字まで（空も可）、8 個まで。形の合わない項目は GameRush が落とし、8 個を超えたら全部落とす
+- キーは英数字と `_-` で 32 文字まで（`__proto__` は使えない）、値は英数字と `._~:,-` で 128 文字まで（空も可）、8 個まで。形の合わない項目と、2回書かれたキーは GameRush が落とし、8 個を超えたら全部落とす
 - 渡るのは、プレイヤーが最初に開いたスライドのゲームだけ。別のゲームへスワイプして戻ったときは `params` が空。フィードではページを読み直すと空になるが、単体表示や埋め込みでは読み直すと同じ値がまた渡ることがあるので、何度渡っても困らないように書く
 - `get()` は GameRush から届くまで待つ。`current()` は届く前なら `null`
-- 古い GameRush（`protocolVersion` 8 未満）と GameRush の外では `get()` が `unsupported`、`current()` が `null`
+- 古い GameRush（`protocolVersion` 8 未満）と GameRush の外では `get()` が `unsupported`、`current()` が `null`。GameRush のアプリ側が古くて答えられないときは、`unsupported` ではなく空の `params` が返る
 - モックは `GRush.mock.config.launchParams`（既定 `{}`）をそのまま返す。上の制限では確かめない
 
 ### アナリティクス
