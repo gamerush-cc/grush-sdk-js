@@ -41,9 +41,26 @@ const INVOKERS = {
   "leaderboard.aroundMe": (apis, p) => apis.Leaderboards?.aroundMe(p.key, p),
   "leaderboard.friends": (apis, p) => apis.Leaderboards?.friends(p.key, p),
   "playerState.getMine": (apis) => apis.PlayerState?.getMine(),
-  "playerState.setMine": (apis, p) => apis.PlayerState?.setMine(p.payload, p.baseRevision),
+  // `rating` is in the params only when the runtime is new enough to read it (see sdk.js).
+  "playerState.setMine": (apis, p) =>
+    "rating" in p
+      ? apis.PlayerState?.setMine(p.payload, p.baseRevision, { rating: p.rating })
+      : apis.PlayerState?.setMine(p.payload, p.baseRevision),
   "playerState.get": (apis, p) => apis.PlayerState?.get(p.pseudoIds),
   "playerState.report": (apis, p) => apis.PlayerState?.report(p.pseudoId),
+  "playerState.sample": (apis, p) => apis.PlayerState?.sample?.(p),
+  "inbox.send": (apis, p) => apis.Inbox?.send?.(p.to, p.kind, p.payload),
+  "inbox.list": (apis, p) => apis.Inbox?.list?.(p),
+  "inbox.markRead": (apis, p) => apis.Inbox?.markRead?.(p.ids),
+  "inbox.remove": (apis, p) => apis.Inbox?.remove?.(p.ids),
+  "inbox.report": (apis, p) => apis.Inbox?.report?.(p.messageId),
+  "trade.create": (apis, p) => apis.Trade?.create?.(p),
+  "trade.list": (apis, p) => apis.Trade?.list?.(p),
+  "trade.mine": (apis) => apis.Trade?.mine?.(),
+  "trade.accept": (apis, p) => apis.Trade?.accept?.(p.tradeId, p.give),
+  "trade.cancel": (apis, p) => apis.Trade?.cancel?.(p.tradeId),
+  "trade.ack": (apis, p) => apis.Trade?.ack?.(p.ids),
+  "trade.report": (apis, p) => apis.Trade?.report?.(p.tradeId),
   "share.open": (apis, p) => apis.Share?.share(p),
   "share.getAvailability": (apis) => apis.Share?.isAvailable(),
   "locale.get": (apis) => apis.Locale?.get(),
@@ -76,6 +93,8 @@ function currentApis() {
     Net: runtimeApi("Net"),
     Share: runtimeApi("Share"),
     Locale: runtimeApi("Locale"),
+    Inbox: runtimeApi("Inbox"),
+    Trade: runtimeApi("Trade"),
   };
 }
 

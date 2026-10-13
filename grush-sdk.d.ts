@@ -97,7 +97,149 @@ export type GRushPlayerState = {
   pseudoId: string;
   payload: JsonValue;
   revision: number;
+  /** 相手探しに使う任意の数値。書いていなければ `null`。 */
+  rating: number | null;
   updatedAt: string;
+};
+
+export type GRushPlayerStateWriteOptions = {
+  /**
+   * 相手探しに使う数値（-1e9 より大きく 1e9 より小さい）。`null` で消し、省略すると今の値のまま。
+   * `protocolVersion` 7 未満の GameRush では送らず、payload だけを書く。
+   */
+  rating?: number | null;
+};
+
+export type GRushSampleOptions = {
+  /** 1〜20。省略すると 10。 */
+  count?: number;
+  /** `minRating` と `maxRating` は一緒に渡す。範囲を渡すと、rating の無い状態は返らない。 */
+  minRating?: number;
+  maxRating?: number;
+};
+
+/**
+ * 受信箱のメッセージと交換所のアイテムで運べる値。文字列とオブジェクトのキーは
+ * `^[A-Za-z0-9_.:-]{1,32}$` の識別子だけで、文章や画像は運べない。数値・真偽値・null と、
+ * それらの配列とオブジェクト（最上位を 1 段目として 4 段まで、値は合計 64 個まで）。
+ */
+export type GRushPayloadValue =
+  | string
+  | number
+  | boolean
+  | null
+  | GRushPayloadValue[]
+  | { [key: string]: GRushPayloadValue };
+
+export type GRushPayloadObject = { [key: string]: GRushPayloadValue };
+
+export type GRushInboxMessage = {
+  id: string;
+  /** 送り手の疑似 ID。 */
+  from: string;
+  kind: string;
+  payload: GRushPayloadObject;
+  createdAt: string;
+  /** 未読なら `null`。 */
+  readAt: string | null;
+};
+
+export type GRushInboxPage = {
+  /** 新しい順。 */
+  messages: GRushInboxMessage[];
+  /** 絞り込みによらない未読の数。 */
+  unreadCount: number;
+  /** 続きがあれば次の `list` の `cursor` に渡す。無ければ `null`。 */
+  nextCursor: string | null;
+};
+
+export type GRushInboxListOptions = {
+  unreadOnly?: boolean;
+  /** 1〜50。省略すると 20。 */
+  limit?: number;
+  cursor?: string | null;
+};
+
+/** 知らない値が増えても読めるよう、文字列のまま渡す。 */
+export type GRushTradeStatus = "open" | "matched" | "cancelled" | "expired" | (string & {});
+
+export type GRushTrade = {
+  id: string;
+  /** 出品者の疑似 ID。消えた疑似 ID は `null`。 */
+  from: string | null;
+  /** 指名の出品の相手。公開の出品では `null`。 */
+  to: string | null;
+  /** 成立させた相手の疑似 ID。 */
+  taker: string | null;
+  offer: GRushPayloadObject;
+  want: GRushPayloadObject;
+  offerKey: string | null;
+  wantKey: string | null;
+  /** 受けた側が渡したもの。当事者（出品者と受けた側）にだけ入り、ほかの人には `null`。 */
+  give: GRushPayloadObject | null;
+  status: GRushTradeStatus;
+  createdAt: string;
+  expiresAt: string;
+  settledAt: string | null;
+};
+
+export type GRushTradeRole = "offerer" | "taker" | (string & {});
+
+/**
+ * `receiveGive`: 出品者が `give` を受け取る。`returnOffer`: 出品者が `offer` を手元へ戻す
+ * （取り下げ・期限切れ・運営の非表示）。`receiveOffer`: 受けた側が `offer` を受け取る。
+ * 知らない値は反映せず、`ack` もしない。
+ */
+export type GRushTradeAction = "receiveGive" | "returnOffer" | "receiveOffer" | (string & {});
+
+export type GRushPendingTrade = GRushTrade & { role: GRushTradeRole; action: GRushTradeAction };
+
+export type GRushMyTrades = {
+  /** 自分の受付中の出品。 */
+  open: GRushTrade[];
+  /** 終わったが、まだ `ack` していない取引（終わった順）。 */
+  pending: GRushPendingTrade[];
+};
+
+export type GRushTradeOutcome = "matched" | "taken" | "expired" | "cancelled" | "notFound";
+
+export type GRushTradeAcceptResult = {
+  outcome: GRushTradeOutcome;
+  /** `matched` のときの取引。 */
+  trade: GRushTrade | null;
+};
+
+export type GRushTradeCreateOptions = {
+  /** 出すもの。詰めた JSON で 2KB まで。 */
+  offer: GRushPayloadObject;
+  /** 欲しいもの。詰めた JSON で 1KB まで。 */
+  want: GRushPayloadObject;
+  /** 一覧の絞り込みに使う識別子（`^[A-Za-z0-9._:-]{1,32}$`）。 */
+  offerKey?: string;
+  wantKey?: string;
+  /** 指名の出品の相手の疑似 ID。省略すると公開の出品。 */
+  to?: string;
+  /** 600〜604800 秒。省略すると 3 日。 */
+  expiresInSec?: number;
+  /**
+   * 出品の識別子（`^[A-Za-z0-9._:-]{1,64}$`）。同じ値の再送は、中身によらず先に作った出品を返す。
+   * 呼ぶ前にセーブへ保存し、応答が失われたら同じ値で呼び直す。
+   */
+  operationId: string;
+};
+
+export type GRushTradeListOptions = {
+  offerKey?: string;
+  wantKey?: string;
+  /** 1〜50。省略すると 20。 */
+  limit?: number;
+  cursor?: string | null;
+};
+
+export type GRushTradePage = {
+  /** 他人の公開の出品と自分宛ての指名の出品のうち、受付中のもの（新しい順）。 */
+  trades: GRushTrade[];
+  nextCursor: string | null;
 };
 
 /**
@@ -252,6 +394,10 @@ export type GRushMockConfig = {
   avatarUrl: string | null;
   grantProfileConsent: boolean;
   confirmPlayerStateReport: boolean;
+  /** 受信箱の通報の確認でプレイヤーが押す答え。 */
+  confirmInboxReport: boolean;
+  /** 交換所の通報の確認でプレイヤーが押す答え。 */
+  confirmTradeReport: boolean;
   unreliableDropRate: number;
   maxPeers: number;
   shareAvailable: boolean;
@@ -286,7 +432,29 @@ export interface GRushMock {
     value: number,
     options?: { avatarUrl?: string | null; isGuest?: boolean },
   ): void;
-  definePlayerState(pseudoId: string, payload: JsonValue, options?: { hidden?: boolean }): void;
+  definePlayerState(
+    pseudoId: string,
+    payload: JsonValue,
+    options?: { hidden?: boolean; rating?: number | null },
+  ): void;
+  /**
+   * モックの相手の疑似 ID。それぞれ rating 付きの公開プレイヤー状態を持ち、届いたメッセージを同じ
+   * `kind` と `payload` で送り返す。`reset()` の後は、最初の相手からのメッセージ1通と、受付中の出品を2件持つ。
+   */
+  readonly rivals: readonly string[];
+  /** `from` から自分の受信箱へメッセージを届ける。形が受信箱の縛りに合わなければ `false`。 */
+  receiveInbox(from: string, kind: string, payload: GRushPayloadObject): boolean;
+  /** `from` の出品を作る。`toSelf` で自分宛ての指名の出品になる。形が縛りに合わなければ `null`。 */
+  offerTrade(
+    from: string,
+    offer: GRushPayloadObject,
+    want: GRushPayloadObject,
+    options?: { offerKey?: string; wantKey?: string; toSelf?: boolean; expiresInSec?: number },
+  ): GRushTrade | null;
+  /** 自分の出品を `by`（省略すると最初の相手）が受ける。結果は受諾の `outcome` と同じ。 */
+  acceptTrade(tradeId: string, give: GRushPayloadObject, by?: string): GRushTradeOutcome;
+  /** 受付中の出品をいま期限切れにする。 */
+  expireTrade(tradeId: string): boolean;
   addPeer(displayName: string, avatarUrl?: string | null): GRushMockPeer | null;
   removePeer(peer: GRushMockPeer): void;
   /** モックが受けた分析イベントの写し。直近の 200 件を古い順に返す。`reset()` で空になる。 */
@@ -329,9 +497,68 @@ export interface GRushSdk {
     setMine(
       payload: { [key: string]: JsonValue },
       baseRevision?: number,
+      options?: GRushPlayerStateWriteOptions,
     ): Promise<GRushResult<GRushPlayerState>>;
     get(pseudoIds: string[]): Promise<GRushResult<GRushPlayerState[]>>;
     report(pseudoId: string): Promise<GRushResult<boolean>>;
+    /**
+     * 相手探し。同じゲームの他プレイヤーの公開状態をランダムに返す。自分と運営が伏せた状態は返らず、
+     * 名前も返らない。`protocolVersion` 7 未満の GameRush では `unsupported`。
+     */
+    sample(options?: GRushSampleOptions): Promise<GRushResult<GRushPlayerState[]>>;
+  };
+  /**
+   * 受信箱。同じゲームの疑似 ID 宛てに、小さい構造化メッセージ（非同期対戦の結果の通知など）を送り、
+   * 受け取る。`payload` の文字列は識別子だけで、文章や画像は送れない（{@link GRushPayloadValue}）。
+   * 利用者どうしの文章や画像のやりとりには使わない。`protocolVersion` 7 未満の GameRush では `unsupported`。
+   */
+  inbox: {
+    /** 詰めた JSON で 1KB までの `payload` を送る。`kind` は `^[A-Za-z0-9._:-]{1,32}$`。 */
+    send(to: string, kind: string, payload: GRushPayloadObject): Promise<GRushResult<boolean>>;
+    list(options?: GRushInboxListOptions): Promise<GRushResult<GRushInboxPage>>;
+    /** 既読にし、更新した件数を返す（50 件まで）。 */
+    markRead(ids: string[]): Promise<GRushResult<number>>;
+    /** 消し、消した件数を返す（50 件まで）。 */
+    remove(ids: string[]): Promise<GRushResult<number>>;
+    /**
+     * メッセージを通報する。確認は GameRush が出し、承諾されたら `true`。通報すると送り手を
+     * ブロックし、その相手のメッセージと出品は見えなくなる。ゲストは `signInRequired`。
+     */
+    report(messageId: string): Promise<GRushResult<boolean>>;
+  };
+  /**
+   * 交換所。プレイヤーがアイテムを出品し、同じゲームの別のプレイヤーが受ける。アイテムの正当性は
+   * GameRush が確かめず、交換が片方だけ成立しないことと、終わった取引を取りこぼさないことだけを保証する。
+   * `offer`・`want`・`give` の文字列は識別子だけで、文章や画像は送れない（{@link GRushPayloadValue}）。
+   * 利用者どうしの文章や画像のやりとりには使わない。
+   *
+   * 取りこぼさないために、次の順で使う。
+   * 1. 出品の前に、出すアイテムを手元のセーブで仮置き（使えない状態）にする。
+   * 2. `operationId` をセーブに保存してから `create` する。
+   * 3. 応答が失われたら、同じ `operationId` で `create` を呼び直す。
+   * 4. `mine()` の `pending` をセーブに反映し、クラウドセーブに保存してから `ack` する。
+   * 5. 反映済みの取引 ID をセーブに持ち、同じ取引を二度反映しない。
+   *
+   * `protocolVersion` 7 未満の GameRush では `unsupported`。
+   */
+  trade: {
+    create(options: GRushTradeCreateOptions): Promise<GRushResult<GRushTrade>>;
+    list(options?: GRushTradeListOptions): Promise<GRushResult<GRushTradePage>>;
+    mine(): Promise<GRushResult<GRushMyTrades>>;
+    /**
+     * 出品を受ける。先に取られた・期限切れ・取り下げ・見えない出品はエラーではなく `outcome` で返る。
+     * 同じ取引への再送は `matched` を返す。`give` は詰めた JSON で 2KB まで。
+     */
+    accept(tradeId: string, give: GRushPayloadObject): Promise<GRushResult<GRushTradeAcceptResult>>;
+    /** 自分の受付中の出品を取り下げる。終わっていれば今の状態を返す。 */
+    cancel(tradeId: string): Promise<GRushResult<GRushTrade>>;
+    /** `pending` の取引の受け取りを確かめ、記録した件数を返す（50 件まで）。 */
+    ack(ids: string[]): Promise<GRushResult<number>>;
+    /**
+     * 出品を通報する。確認は GameRush が出し、承諾されたら `true`。通報すると出品者をブロックし、
+     * その相手のメッセージと出品は見えなくなる。ゲストは `signInRequired`。
+     */
+    report(tradeId: string): Promise<GRushResult<boolean>>;
   };
   cloudSave: {
     /**

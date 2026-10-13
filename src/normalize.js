@@ -92,8 +92,98 @@ export function playerStateOf(raw) {
     pseudoId: text(raw.pseudoId),
     payload: raw.payload ?? {},
     revision: number(raw.revision),
+    rating: typeof raw.rating === "number" ? raw.rating : null,
     updatedAt: text(raw.updatedAt),
   };
+}
+
+// The runtime may hand back either the bare value or the RPC result that wraps it ({ states }, { sent }…).
+export function unwrap(raw, key) {
+  return raw && typeof raw === "object" && !Array.isArray(raw) && key in raw ? raw[key] : raw;
+}
+
+export function countOf(raw, key) {
+  const value = unwrap(raw, key);
+  return typeof value === "number" ? value : undefined;
+}
+
+export function flagOf(raw, key) {
+  return unwrap(raw, key) === true;
+}
+
+function payloadOf(raw) {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+
+export function inboxMessageOf(raw) {
+  if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !raw.id) return null;
+  return {
+    id: raw.id,
+    from: text(raw.from),
+    kind: text(raw.kind),
+    payload: payloadOf(raw.payload),
+    createdAt: text(raw.createdAt),
+    readAt: nullableText(raw.readAt),
+  };
+}
+
+export function inboxPageOf(raw) {
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.messages)) return null;
+  return {
+    messages: raw.messages.map(inboxMessageOf).filter((message) => message !== null),
+    unreadCount: number(raw.unreadCount),
+    nextCursor: nullableText(raw.nextCursor),
+  };
+}
+
+const TRADE_OUTCOMES = new Set(["matched", "taken", "expired", "cancelled", "notFound"]);
+
+export function tradeOf(raw) {
+  if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !raw.id) return null;
+  return {
+    id: raw.id,
+    from: nullableText(raw.from),
+    to: nullableText(raw.to),
+    taker: nullableText(raw.taker),
+    offer: payloadOf(raw.offer),
+    want: payloadOf(raw.want),
+    offerKey: nullableText(raw.offerKey),
+    wantKey: nullableText(raw.wantKey),
+    give: raw.give && typeof raw.give === "object" && !Array.isArray(raw.give) ? raw.give : null,
+    // A status this SDK does not know yet is passed through as is, so a newer GameRush still reads.
+    status: text(raw.status),
+    createdAt: text(raw.createdAt),
+    expiresAt: text(raw.expiresAt),
+    settledAt: nullableText(raw.settledAt),
+  };
+}
+
+function pendingTradeOf(raw) {
+  const trade = tradeOf(raw);
+  if (!trade) return null;
+  return { ...trade, role: text(raw.role), action: text(raw.action) };
+}
+
+export function tradePageOf(raw) {
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.trades)) return null;
+  return {
+    trades: raw.trades.map(tradeOf).filter((trade) => trade !== null),
+    nextCursor: nullableText(raw.nextCursor),
+  };
+}
+
+export function myTradesOf(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (!Array.isArray(raw.open) || !Array.isArray(raw.pending)) return null;
+  return {
+    open: raw.open.map(tradeOf).filter((trade) => trade !== null),
+    pending: raw.pending.map(pendingTradeOf).filter((trade) => trade !== null),
+  };
+}
+
+export function acceptResultOf(raw) {
+  if (!raw || typeof raw !== "object" || !TRADE_OUTCOMES.has(raw.outcome)) return null;
+  return { outcome: raw.outcome, trade: tradeOf(raw.trade) };
 }
 
 export function cloudSaveOf(raw) {
