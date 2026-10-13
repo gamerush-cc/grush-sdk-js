@@ -17,7 +17,7 @@ git submodule add https://github.com/gamerush-cc/grush-sdk-js.git vendor/grush-s
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.8.0/grush-sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/gamerush-cc/grush-sdk-js@v0.9.0/grush-sdk.js"></script>
 ```
 
 CDN から読むときは版を固定すること（`@main` だと、アップロード済みのビルドの挙動が後から変わる）。
@@ -206,8 +206,10 @@ if (language.ok) console.log(language.value.locale, language.value.source);
 ```
 
 - `locale` は BCP 47 の言語タグ（例 `"ja"` / `"en-US"`）。`source` は `"user"`（GameRush の言語設定）/ `"system"` / `"device"`（端末の言語）で、今後増えても動くように書く。`languages` は優先順の一覧
-- 返る配列は複製。書き換えても GameRush 側には影響しない
-- 古い GameRush（`protocolVersion` 4 未満）では `get()` が `unsupported`、`current()` が `null`、`onChange` は何もしない解除関数を返す
+- `source` は必ず入り、GameRush が渡さなければ `"device"`。`languages` は空にならず、GameRush が空の一覧を渡せば `[locale]`
+- 返る配列は複製。`onChange` の `handler` もそれぞれ別の複製を受け取る。書き換えても GameRush 側には影響しない
+- 古い GameRush（`protocolVersion` 4 未満）では `get()` が `unsupported`、`current()` が `null`、`onChange` の `handler` は呼ばれない
+- `GRush.configure({ backend })` でバックエンドを切り替えても、`onChange` の購読は新しいバックエンドへ移って続く
 - モックは `GRush.mock.config.locale`（既定 `null` = ブラウザの言語、`source: "device"`）で切り替える。`onChange` は呼ばれない
 
 ### アナリティクス

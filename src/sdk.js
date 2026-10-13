@@ -22,7 +22,7 @@ import {
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.8.0";
+export const VERSION = "0.9.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
@@ -54,6 +54,8 @@ export function createGRush(options = {}) {
   const webBackend = createWebBackend();
   let selection = BACKENDS.has(options.backend) ? options.backend : "auto";
   let currentRoom = null;
+  const localeHandlers = new Set();
+  let localeBinding = null;
 
   function backend() {
     if (selection === "web") return webBackend;
@@ -290,18 +292,54 @@ export function createGRush(options = {}) {
       }
     },
     onChange(handler) {
-      const active = backend();
       if (typeof handler !== "function") return () => {};
-      if (!active.isAvailable() || active.protocolVersion() < LOCALE_PROTOCOL_VERSION) {
-        return () => {};
-      }
-      const forward = (raw) => {
-        const value = localeOf(raw);
-        if (value) handler(value);
+      // Entries are objects so the same function registered twice stays two subscriptions.
+      const entry = { handler };
+      localeHandlers.add(entry);
+      bindLocale();
+      return () => {
+        if (!localeHandlers.delete(entry)) return;
+        bindLocale();
       };
-      return active.localeOnChange?.(forward) ?? (() => {});
     },
   };
+
+  // The handlers stay registered on the SDK, and only one subscription is held on the backend.
+  // When configure() switches the backend, that subscription moves to the new one.
+  function bindLocale() {
+    const active = backend();
+    const target =
+      localeHandlers.size > 0 &&
+      active.isAvailable() &&
+      active.protocolVersion() >= LOCALE_PROTOCOL_VERSION
+        ? active
+        : null;
+    if ((localeBinding?.backend ?? null) === target) return;
+    const previous = localeBinding;
+    localeBinding = null;
+    previous?.off();
+    if (!target) return;
+    let off = null;
+    try {
+      off = target.localeOnChange?.(dispatchLocale);
+    } catch {}
+    localeBinding = { backend: target, off: typeof off === "function" ? off : () => {} };
+  }
+
+  function dispatchLocale(raw) {
+    if (!localeOf(raw)) return;
+    for (const entry of [...localeHandlers]) {
+      if (!localeHandlers.has(entry)) continue;
+      // Each handler gets its own copy, and one handler throwing does not stop the others.
+      try {
+        entry.handler(localeOf(raw));
+      } catch (error) {
+        queueMicrotask(() => {
+          throw error;
+        });
+      }
+    }
+  }
 
   // Analytics answers synchronously with a boolean and never throws, so a game can log from anywhere
   // without awaiting. An older GameRush or a page outside GameRush answers false.
@@ -398,6 +436,7 @@ export function createGRush(options = {}) {
       currentRoom = null;
       previous?.leave();
       selection = settings.backend;
+      bindLocale();
     },
     isAvailable() {
       const active = backend();
