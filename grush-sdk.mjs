@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.6.0 */
+/*! GameRush SDK for JavaScript v0.7.0 */
 
 // src/analytics-rules.js
 var ANALYTICS_EVENT_KINDS = ["onboarding", "funnel", "custom", "economy"];
@@ -2038,7 +2038,7 @@ function createRoom(source, info, onClosed) {
 }
 
 // src/sdk.js
-var VERSION = "0.6.0";
+var VERSION = "0.7.0";
 var REQUIRED_PROTOCOL_VERSION = 1;
 var PLAYER_STATE_PROTOCOL_VERSION = 2;
 var SHARE_PROTOCOL_VERSION = 3;
