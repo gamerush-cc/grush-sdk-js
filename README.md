@@ -132,6 +132,7 @@ if (inbox.ok) {
 - **payload で文章や画像は送れない。** payload はオブジェクトで、文字列の値とキーは識別子（`^[A-Za-z0-9_.:-]{1,32}$`）だけ、ほかは数値・真偽値・null。入れ子は最上位を 1 段目として 4 段まで、値は合計 64 個まで、詰めた JSON で 1KB まで。`kind` は `^[A-Za-z0-9._:-]{1,32}$`。合わなければ `invalidParams`
 - 利用者どうしの文章や画像のやりとりには使わない
 - `list` は新しい順（`limit` は 1〜50、既定 20）。続きは `nextCursor` を `cursor` に渡す。`unreadCount` は絞り込みによらない未読の数。`markRead` / `remove` は 1 回 50 件まで
+- 同じゲームの疑似 ID でない宛先は `invalidParams`。送りすぎ（毎時・毎日の上限）は `rateLimited` で、時間が経てば回復する。待つ時間が分かれば `retryAfterMs` が入る
 - `report(messageId)` は GameRush が確認を出し、承諾されたら `true`。通報すると送り手をブロックし、その相手のメッセージと出品は見えなくなる。ゲストは `signInRequired`
 - 古い GameRush（`protocolVersion` 7 未満）では `unsupported`
 
@@ -176,6 +177,7 @@ if (mine.ok) {
 - **`offer`・`want`・`give` で文章や画像は送れない。** 形は受信箱の payload と同じで、大きさは詰めた JSON で offer 2KB・want 1KB・give 2KB まで。利用者どうしの文章や画像のやりとりには使わない
 - `accept` は先に取られた・期限切れ・取り下げ・見えない出品をエラーにせず、`outcome`（`matched` / `taken` / `expired` / `cancelled` / `notFound`）で返す。`trade` は `matched` のときだけ入る。同じ取引への再送は `matched`
 - `to` に疑似 ID を渡すと指名の出品になる。`expiresInSec` は 600〜604800（既定 3 日）。受付中の出品は 1 人 10 件まで
+- 受付中の出品が 10 件あるときの `create` は `invalidParams` で、待っても直らない（取り下げるか、成立・期限切れを待つ）。毎日 30 件の出品と毎時 30 件の受諾の上限は `rateLimited` で、時間が経てば回復する。待つ時間が分かれば `retryAfterMs` が入る
 - `list` は他人の公開の出品と自分宛ての指名の出品のうち、受付中のもの（新しい順）。`offerKey` / `wantKey` で絞る。`give` は当事者にだけ入る
 - `report(tradeId)` は GameRush が確認を出し、承諾されたら `true`。通報すると出品者をブロックする。ゲストは `signInRequired`
 - 古い GameRush（`protocolVersion` 7 未満）では `unsupported`
