@@ -2,15 +2,22 @@ import { sanitizeAnalyticsEvent } from "./analytics-rules.js";
 import { createMockLeaderboards } from "./mock-leaderboards.js";
 import { MANIFEST_PATH, parseLeaderboardManifest } from "./mock-manifest.js";
 import { createMockNet } from "./mock-net.js";
+import { MOCK_RIVALS, createMockSocial } from "./mock-social.js";
 import { CODES, failure, ok } from "./result.js";
 
 const MANIFEST_TIMEOUT_MS = 3000;
 // How many analytics events mock.analyticsEvents() keeps, newest last.
 export const MOCK_ANALYTICS_MAX_EVENTS = 200;
+// The newest protocol the mock implements (matchmaking, the inbox and trades need 7).
+const MOCK_PROTOCOL_VERSION = 7;
 
 const STORAGE_KEY = "grush-sdk-mock";
 const SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const PLAYER_STATE_MAX_BYTES = 4 * 1024;
+const SAMPLE_DEFAULT_COUNT = 10;
+const SAMPLE_MAX_COUNT = 20;
+const RATING_LIMIT = 1e9;
+const RIVAL_RATINGS = [1000, 1200, 1500];
 const CLOUD_SAVE_MAX_BYTES = 256 * 1024;
 const OPAQUE_STRING_MIN_LENGTH = 256;
 const LOCALE_FALLBACK = "ja";
@@ -52,6 +59,8 @@ export function defaultMockConfig() {
     avatarUrl: null,
     grantProfileConsent: true,
     confirmPlayerStateReport: true,
+    confirmInboxReport: true,
+    confirmTradeReport: true,
     unreliableDropRate: 0,
     maxPeers: 8,
     shareAvailable: true,
@@ -111,6 +120,28 @@ function fallbackOf(value) {
   return { ok: false };
 }
 
+function isRating(value) {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value > -RATING_LIMIT &&
+    value < RATING_LIMIT
+  );
+}
+
+function shuffled(items) {
+  const copy = [...items];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const other = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[other]] = [copy[other], copy[index]];
+  }
+  return copy;
+}
+
+function stateWire({ hidden: _hidden, ...state }) {
+  return state;
+}
+
 export function createMockBackend(config) {
   const otherStates = new Map();
   const cloudSaves = new Map();
@@ -118,6 +149,33 @@ export function createMockBackend(config) {
   let analyticsEvents = [];
   const analyticsWarned = new Set();
   let myState = null;
+
+  function putState(pseudoId, payload, options) {
+    otherStates.set(pseudoId, {
+      pseudoId,
+      payload,
+      revision: 1,
+      rating: isRating(options.rating) ? options.rating : null,
+      updatedAt: new Date().toISOString(),
+      hidden: options.hidden === true,
+    });
+  }
+
+  // Each rival has a public state with a rating, so matchmaking has someone to find. The payloads are
+  // fresh literals, so creating the mock needs no structuredClone.
+  function seedRivals() {
+    MOCK_RIVALS.forEach((pseudoId, index) => {
+      putState(pseudoId, { level: (index + 1) * 5 }, { rating: RIVAL_RATINGS[index] });
+    });
+  }
+
+  seedRivals();
+
+  const social = createMockSocial({
+    config,
+    selfId: () => localPseudoId(),
+    isKnownPlayer: (pseudoId) => otherStates.has(pseudoId),
+  });
 
   const consented = () => config.signedIn && readStored().consent === true;
 
@@ -223,13 +281,19 @@ export function createMockBackend(config) {
     return ok(playerWire());
   }
 
-  function setMine({ payload, baseRevision }) {
+  function setMine(params) {
+    const { payload, baseRevision } = params;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       return invalid("Player state payload must be a JSON object.");
     }
     if (jsonBytes(payload) > PLAYER_STATE_MAX_BYTES) return invalid("Player state is too large.");
     if (containsOpaqueString(payload)) {
       return invalid("Player state must not contain opaque encoded strings.");
+    }
+    // No rating keeps the current one, null clears it.
+    const ratingGiven = "rating" in params && params.rating !== undefined;
+    if (ratingGiven && params.rating !== null && !isRating(params.rating)) {
+      return invalid("Invalid rating.");
     }
     const current = myState ? myState.revision : 0;
     if (typeof baseRevision === "number" && baseRevision !== current) {
@@ -239,6 +303,7 @@ export function createMockBackend(config) {
       pseudoId: localPseudoId(),
       payload: structuredClone(payload),
       revision: current + 1,
+      rating: ratingGiven ? params.rating : (myState?.rating ?? null),
       updatedAt: new Date().toISOString(),
     };
     return ok(myState);
@@ -251,8 +316,36 @@ export function createMockBackend(config) {
     const states = pseudoIds
       .map((id) => otherStates.get(id))
       .filter((state) => state && !state.hidden)
-      .map(({ hidden: _hidden, ...state }) => state);
+      .map(stateWire);
     return ok(states);
+  }
+
+  // Mirrors GameRush's matchmaking: random visible states of other players, optionally within a rating
+  // range. States without a rating only come back when no range is given.
+  function sample({ count, minRating, maxRating }) {
+    let size = SAMPLE_DEFAULT_COUNT;
+    if (count !== undefined && count !== null) {
+      if (!Number.isInteger(count) || count < 1 || count > SAMPLE_MAX_COUNT) {
+        return invalid(`count must be an integer from 1 to ${SAMPLE_MAX_COUNT}.`);
+      }
+      size = count;
+    }
+    const minGiven = minRating !== undefined && minRating !== null;
+    const maxGiven = maxRating !== undefined && maxRating !== null;
+    if (minGiven !== maxGiven) return invalid("minRating and maxRating must be given together.");
+    if (minGiven && (!isRating(minRating) || !isRating(maxRating))) {
+      return invalid("Invalid rating range.");
+    }
+    if (minGiven && minRating > maxRating) return invalid("minRating must not exceed maxRating.");
+    const self = localPseudoId();
+    const candidates = [...otherStates.values()].filter(
+      (state) =>
+        !state.hidden &&
+        state.pseudoId !== self &&
+        (!minGiven ||
+          (state.rating !== null && state.rating >= minRating && state.rating <= maxRating)),
+    );
+    return ok(shuffled(candidates).slice(0, size).map(stateWire));
   }
 
   function saveCloud({ payload, slot, baseRevision, fallback }) {
@@ -371,6 +464,19 @@ export function createMockBackend(config) {
       if (!target || target.hidden) return invalid("No player state for that id.");
       return ok(config.confirmPlayerStateReport === true);
     },
+    "playerState.sample": sample,
+    "inbox.send": social.handlers.send,
+    "inbox.list": social.handlers.list,
+    "inbox.markRead": social.handlers.markRead,
+    "inbox.remove": social.handlers.removeMessages,
+    "inbox.report": social.handlers.reportMessage,
+    "trade.create": social.handlers.create,
+    "trade.list": social.handlers.listTrades,
+    "trade.mine": social.handlers.mine,
+    "trade.accept": social.handlers.accept,
+    "trade.cancel": social.handlers.cancel,
+    "trade.ack": social.handlers.ack,
+    "trade.report": social.handlers.reportTrade,
     "cloudSave.load": loadCloud,
     "cloudSave.save": saveCloud,
     "cloudSave.remove": removeCloud,
@@ -393,15 +499,13 @@ export function createMockBackend(config) {
     loadLeaderboards,
     addRival: (key, displayName, value, options) =>
       leaderboards.addRival(key, displayName, value, options),
-    definePlayerState(pseudoId, payload, options = {}) {
-      otherStates.set(pseudoId, {
-        pseudoId,
-        payload: structuredClone(payload),
-        revision: 1,
-        updatedAt: new Date().toISOString(),
-        hidden: options.hidden === true,
-      });
-    },
+    definePlayerState: (pseudoId, payload, options) =>
+      putState(pseudoId, structuredClone(payload), options ?? {}),
+    rivals: MOCK_RIVALS,
+    receiveInbox: social.controls.receiveInbox,
+    offerTrade: social.controls.offerTrade,
+    acceptTrade: social.controls.acceptTrade,
+    expireTrade: social.controls.expireTrade,
     addPeer: (displayName, avatarUrl) => net.addPeer(displayName, avatarUrl),
     removePeer: (peer) => net.removePeer(peer),
     analyticsEvents: () => structuredClone(analyticsEvents),
@@ -410,6 +514,8 @@ export function createMockBackend(config) {
       manifestGeneration += 1;
       manifestRead = null;
       otherStates.clear();
+      seedRivals();
+      social.reset();
       cloudSaves.clear();
       localSaves.clear();
       analyticsEvents = [];
@@ -425,7 +531,7 @@ export function createMockBackend(config) {
     kind: "mock",
     controls,
     isAvailable: () => true,
-    protocolVersion: () => 6,
+    protocolVersion: () => MOCK_PROTOCOL_VERSION,
     localeCurrent: () => mockLocale(config),
     localeOnChange: () => () => {},
     analyticsAvailable: () => true,

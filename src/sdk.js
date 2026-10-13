@@ -2,25 +2,37 @@ import { createMockBackend, defaultMockConfig } from "./backend-mock.js";
 import { createWebBackend, isRuntimePresent } from "./backend-web.js";
 import { MAX_MESSAGE_BYTES } from "./bytes.js";
 import {
+  acceptResultOf,
   cloudSaveOf,
+  countOf,
+  flagOf,
+  inboxPageOf,
   leaderboardDefinitionOf,
   leaderboardPageOf,
   localeOf,
+  myTradesOf,
   playerOf,
   playerStateOf,
   shareResultOf,
   submitResultOf,
+  tradeOf,
+  tradePageOf,
+  unwrap,
 } from "./normalize.js";
 import { CODES, failure, ok, unsupported } from "./result.js";
 import { createRoom } from "./room.js";
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.7.0";
 const REQUIRED_PROTOCOL_VERSION = 1;
 const PLAYER_STATE_PROTOCOL_VERSION = 2;
 const SHARE_PROTOCOL_VERSION = 3;
 const LOCALE_PROTOCOL_VERSION = 4;
 const CLOUD_SAVE_LOCAL_PROTOCOL_VERSION = 5;
 const ANALYTICS_PROTOCOL_VERSION = 6;
+// playerState.sample and the rating of playerState.setMine.
+const MATCHMAKING_PROTOCOL_VERSION = 7;
+const INBOX_PROTOCOL_VERSION = 7;
+const TRADE_PROTOCOL_VERSION = 7;
 const BACKENDS = new Set(["auto", "web", "mock", "none"]);
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -107,15 +119,119 @@ export function createGRush(options = {}) {
       mapped("leaderboard.friends", pageParams(key, opts, ["limit"]), required(leaderboardPageOf)),
   };
 
+  const definedOf = (source, names) => {
+    const params = {};
+    for (const name of names) {
+      if (source?.[name] !== undefined) params[name] = source[name];
+    }
+    return params;
+  };
+  const listIn = (key, normalize) => (raw) => {
+    const list = unwrap(raw, key);
+    return Array.isArray(list) ? list.map(normalize).filter((item) => item !== null) : undefined;
+  };
+  const tradeIn = (raw) => tradeOf(unwrap(raw, "trade")) ?? undefined;
+  const optionsError = (options, label) =>
+    options !== undefined && options !== null && typeof options !== "object"
+      ? Promise.resolve(failure(CODES.invalidParams, `${label} options must be an object.`))
+      : null;
+
   const playerState = {
     getMine: () => statesCall("playerState.getMine", undefined, orNull(playerStateOf)),
-    setMine(payload, baseRevision) {
+    setMine(payload, baseRevision, rawExtra) {
       const params = { payload };
       if (typeof baseRevision === "number") params.baseRevision = baseRevision;
+      // A GameRush older than protocol 7 does not know `rating`. It is dropped there instead of failing
+      // the call, so the payload is still written.
+      if (
+        rawExtra?.rating !== undefined &&
+        backend().protocolVersion() >= MATCHMAKING_PROTOCOL_VERSION
+      ) {
+        params.rating = rawExtra.rating;
+      }
       return statesCall("playerState.setMine", params, required(playerStateOf));
     },
     get: (pseudoIds) => statesCall("playerState.get", { pseudoIds }, listOf(playerStateOf)),
     report: (pseudoId) => statesCall("playerState.report", { pseudoId }, (raw) => raw === true),
+    sample(options) {
+      const error = optionsError(options, "Sample");
+      if (error) return error;
+      return mapped(
+        "playerState.sample",
+        definedOf(options, ["count", "minRating", "maxRating"]),
+        listIn("states", playerStateOf),
+        MATCHMAKING_PROTOCOL_VERSION,
+      );
+    },
+  };
+
+  const inbox = {
+    send: (to, kind, payload) =>
+      mapped(
+        "inbox.send",
+        { to, kind, payload },
+        (raw) => flagOf(raw, "sent"),
+        INBOX_PROTOCOL_VERSION,
+      ),
+    list(options) {
+      const error = optionsError(options, "Inbox list");
+      if (error) return error;
+      return mapped(
+        "inbox.list",
+        definedOf(options, ["unreadOnly", "limit", "cursor"]),
+        required(inboxPageOf),
+        INBOX_PROTOCOL_VERSION,
+      );
+    },
+    markRead: (ids) =>
+      mapped("inbox.markRead", { ids }, (raw) => countOf(raw, "updated"), INBOX_PROTOCOL_VERSION),
+    remove: (ids) =>
+      mapped("inbox.remove", { ids }, (raw) => countOf(raw, "updated"), INBOX_PROTOCOL_VERSION),
+    report: (messageId) =>
+      mapped(
+        "inbox.report",
+        { messageId },
+        (raw) => flagOf(raw, "reported"),
+        INBOX_PROTOCOL_VERSION,
+      ),
+  };
+
+  const trade = {
+    create(options) {
+      if (!options || typeof options !== "object") {
+        return Promise.resolve(
+          failure(CODES.invalidParams, "Trade options must be an object like { offer, want }."),
+        );
+      }
+      const params = definedOf(options, [
+        "offer",
+        "want",
+        "offerKey",
+        "wantKey",
+        "to",
+        "expiresInSec",
+        "operationId",
+      ]);
+      return mapped("trade.create", params, tradeIn, TRADE_PROTOCOL_VERSION);
+    },
+    list(options) {
+      const error = optionsError(options, "Trade list");
+      if (error) return error;
+      return mapped(
+        "trade.list",
+        definedOf(options, ["offerKey", "wantKey", "limit", "cursor"]),
+        required(tradePageOf),
+        TRADE_PROTOCOL_VERSION,
+      );
+    },
+    mine: () => mapped("trade.mine", undefined, required(myTradesOf), TRADE_PROTOCOL_VERSION),
+    accept: (tradeId, give) =>
+      mapped("trade.accept", { tradeId, give }, required(acceptResultOf), TRADE_PROTOCOL_VERSION),
+    cancel: (tradeId) => mapped("trade.cancel", { tradeId }, tradeIn, TRADE_PROTOCOL_VERSION),
+    ack: (ids) =>
+      mapped("trade.ack", { ids }, (raw) => countOf(raw, "acked"), TRADE_PROTOCOL_VERSION),
+    report: (tradeId) =>
+      mapped("trade.report", { tradeId }, (raw) => flagOf(raw, "reported"), TRADE_PROTOCOL_VERSION),
   };
 
   // A GameRush older than protocol 5 does not know `fallback`. The option is dropped there instead of
@@ -291,6 +407,8 @@ export function createGRush(options = {}) {
     player,
     leaderboards,
     playerState,
+    inbox,
+    trade,
     cloudSave,
     share,
     locale,

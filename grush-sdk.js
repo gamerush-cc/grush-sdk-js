@@ -1,4 +1,4 @@
-/*! GameRush SDK for JavaScript v0.6.0 */
+/*! GameRush SDK for JavaScript v0.7.0 */
 "use strict";
 (() => {
   // src/analytics-rules.js
@@ -692,12 +692,421 @@
     return error && typeof error.message === "string" && error.message ? error.message : fallback;
   }
 
+  // src/mock-social.js
+  var TOKEN = /^[A-Za-z0-9_.:-]{1,32}$/;
+  var KEY = /^[A-Za-z0-9._:-]{1,32}$/;
+  var OPERATION_ID = /^[A-Za-z0-9._:-]{1,64}$/;
+  var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var MAX_DEPTH = 4;
+  var MAX_SCALARS = 64;
+  var INBOX_MAX_BYTES = 1024;
+  var OFFER_MAX_BYTES = 2048;
+  var WANT_MAX_BYTES = 1024;
+  var GIVE_MAX_BYTES = 2048;
+  var MAX_IDS = 50;
+  var DEFAULT_LIMIT = 20;
+  var MAX_LIMIT = 50;
+  var MAX_OPEN_TRADES = 10;
+  var PENDING_LIMIT = 100;
+  var DEFAULT_EXPIRES_IN_SEC = 3 * 24 * 60 * 60;
+  var MIN_EXPIRES_IN_SEC = 10 * 60;
+  var MAX_EXPIRES_IN_SEC = 7 * 24 * 60 * 60;
+  var MOCK_RIVALS = Object.freeze(["mock-rival-1", "mock-rival-2", "mock-rival-3"]);
+  function isPlainObject2(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  }
+  function walk(value, depth, state) {
+    if (Array.isArray(value) || isPlainObject2(value)) {
+      if (depth > MAX_DEPTH) return `${state.label} must not nest deeper than ${MAX_DEPTH} levels.`;
+      const entries = Array.isArray(value) ? value.map((item) => [null, item]) : Object.entries(value);
+      for (const [key, item] of entries) {
+        if (key !== null && !TOKEN.test(key)) {
+          return `${state.label} keys must be 1-32 letters, digits, or _ . : -`;
+        }
+        const error = walk(item, depth + 1, state);
+        if (error) return error;
+      }
+      return null;
+    }
+    state.scalars += 1;
+    if (state.scalars > MAX_SCALARS) return `${state.label} must hold at most ${MAX_SCALARS} values.`;
+    if (typeof value === "string") {
+      return TOKEN.test(value) ? null : `${state.label} strings must be 1-32 letters, digits, or _ . : - (no free text).`;
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? null : `${state.label} numbers must be finite.`;
+    }
+    if (typeof value === "boolean" || value === null) return null;
+    return `${state.label} must be JSON.`;
+  }
+  function payloadError(value, maxBytes, label) {
+    if (!isPlainObject2(value)) return `${label} must be a JSON object.`;
+    const error = walk(value, 1, { scalars: 0, label });
+    if (error) return error;
+    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > maxBytes) {
+      return `${label} must be ${maxBytes} bytes or smaller.`;
+    }
+    return null;
+  }
+  function idsOf(value) {
+    if (!Array.isArray(value) || value.length === 0 || value.length > MAX_IDS) return null;
+    const ids = /* @__PURE__ */ new Set();
+    for (const entry of value) {
+      if (typeof entry !== "string" || !UUID.test(entry)) return null;
+      ids.add(entry.toLowerCase());
+    }
+    return ids;
+  }
+  function limitOf(value) {
+    if (value === void 0 || value === null) return DEFAULT_LIMIT;
+    return Number.isInteger(value) && value >= 1 && value <= MAX_LIMIT ? value : null;
+  }
+  function uuid() {
+    const crypto = globalThis.crypto;
+    if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
+    const hex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join(
+      ""
+    );
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
+  }
+  function invalid(message) {
+    return failure(CODES.invalidParams, message);
+  }
+  function copy(value) {
+    return value === null || value === void 0 ? value : JSON.parse(JSON.stringify(value));
+  }
+  function pageOf(items, limit, cursor) {
+    let start = 0;
+    if (cursor !== void 0 && cursor !== null) {
+      const at = typeof cursor === "string" ? items.findIndex((item) => item.id === cursor) : -1;
+      if (at === -1) return null;
+      start = at + 1;
+    }
+    const page = items.slice(start, start + limit);
+    const nextCursor = start + limit < items.length && page.length > 0 ? page.at(-1).id : null;
+    return { page, nextCursor };
+  }
+  function createMockSocial({ config, selfId, isKnownPlayer, now = () => Date.now() }) {
+    let messages = [];
+    let trades = [];
+    const blocked = /* @__PURE__ */ new Set();
+    const iso = (ms) => new Date(ms).toISOString();
+    function deliver(from, kind, payload) {
+      if (blocked.has(from)) return;
+      messages.push({
+        id: uuid(),
+        from,
+        kind,
+        payload: copy(payload),
+        createdAt: iso(now()),
+        readAt: null,
+        removed: false
+      });
+    }
+    function visibleMessages() {
+      return messages.filter((message) => !message.removed && !blocked.has(message.from)).reverse();
+    }
+    function messageWire({ removed: _removed, ...message }) {
+      return copy(message);
+    }
+    function send({ to, kind, payload }) {
+      if (typeof to !== "string" || !to) return invalid("Invalid recipient.");
+      if (to === selfId()) return invalid("Cannot send a message to yourself.");
+      if (!isKnownPlayer(to)) return invalid("No player with that id.");
+      if (typeof kind !== "string" || !KEY.test(kind)) return invalid("Invalid kind.");
+      const error = payloadError(payload, INBOX_MAX_BYTES, "Inbox payload");
+      if (error) return invalid(error);
+      deliver(to, kind, payload);
+      return ok(true);
+    }
+    function list({ unreadOnly, limit, cursor }) {
+      const size = limitOf(limit);
+      if (size === null) return invalid("Invalid limit.");
+      const visible = visibleMessages();
+      const filtered = unreadOnly === true ? visible.filter((message) => !message.readAt) : visible;
+      const found = pageOf(filtered, size, cursor);
+      if (!found) return invalid("Invalid cursor.");
+      return ok({
+        messages: found.page.map(messageWire),
+        unreadCount: visible.filter((message) => !message.readAt).length,
+        nextCursor: found.nextCursor
+      });
+    }
+    function updateMessages(rawIds, apply) {
+      const ids = idsOf(rawIds);
+      if (!ids) return invalid("ids must be 1 to 50 message ids.");
+      let updated = 0;
+      for (const message of visibleMessages()) {
+        if (ids.has(message.id.toLowerCase()) && apply(message)) updated += 1;
+      }
+      return ok(updated);
+    }
+    const markRead = ({ ids }) => updateMessages(ids, (message) => {
+      if (message.readAt) return false;
+      message.readAt = iso(now());
+      return true;
+    });
+    const removeMessages = ({ ids }) => updateMessages(ids, (message) => {
+      message.removed = true;
+      return true;
+    });
+    function reportMessage({ messageId }) {
+      if (!config.signedIn) return failure(CODES.signInRequired, "Reporting requires sign-in.");
+      const target = visibleMessages().find((message) => message.id === messageId);
+      if (!target) return invalid("No message for that id.");
+      if (config.confirmInboxReport !== true) return ok(false);
+      blocked.add(target.from);
+      return ok(true);
+    }
+    function expireDue() {
+      const at = now();
+      for (const trade of trades) {
+        if (trade.status === "open" && Date.parse(trade.expiresAt) <= at) {
+          trade.status = "expired";
+          trade.settledAt = trade.expiresAt;
+        }
+      }
+    }
+    function tradeWire(trade) {
+      const { ackedBy: _ackedBy, operationId: _operationId, ...wire } = trade;
+      const party = trade.from === selfId() || trade.taker === selfId();
+      return copy({ ...wire, give: party ? trade.give : null });
+    }
+    function openTrade(from, { offer, want, offerKey, wantKey, to, expiresInSec, operationId }) {
+      const createdAt = now();
+      const trade = {
+        id: uuid(),
+        from,
+        to: to ?? null,
+        taker: null,
+        offer: copy(offer),
+        want: copy(want),
+        offerKey: offerKey ?? null,
+        wantKey: wantKey ?? null,
+        give: null,
+        status: "open",
+        createdAt: iso(createdAt),
+        expiresAt: iso(createdAt + (expiresInSec ?? DEFAULT_EXPIRES_IN_SEC) * 1e3),
+        settledAt: null,
+        ackedBy: /* @__PURE__ */ new Set(),
+        operationId: operationId ?? null
+      };
+      trades.push(trade);
+      return trade;
+    }
+    function tradeOptionsError(p) {
+      const offerError = payloadError(p.offer, OFFER_MAX_BYTES, "Trade offer");
+      if (offerError) return offerError;
+      const wantError = payloadError(p.want, WANT_MAX_BYTES, "Trade want");
+      if (wantError) return wantError;
+      for (const name of ["offerKey", "wantKey"]) {
+        const value = p[name];
+        if (value !== void 0 && value !== null && (typeof value !== "string" || !KEY.test(value))) {
+          return `Invalid ${name}.`;
+        }
+      }
+      const seconds = p.expiresInSec;
+      if (seconds !== void 0 && seconds !== null && !(Number.isInteger(seconds) && seconds >= MIN_EXPIRES_IN_SEC && seconds <= MAX_EXPIRES_IN_SEC)) {
+        return "Invalid expiresInSec.";
+      }
+      return null;
+    }
+    function create(p) {
+      const error = tradeOptionsError(p);
+      if (error) return invalid(error);
+      if (typeof p.operationId !== "string" || !OPERATION_ID.test(p.operationId)) {
+        return invalid("Invalid operationId.");
+      }
+      const self = selfId();
+      if (p.to !== void 0 && p.to !== null) {
+        if (typeof p.to !== "string" || !p.to) return invalid("Invalid recipient.");
+        if (p.to === self) return invalid("Cannot offer a trade to yourself.");
+        if (!isKnownPlayer(p.to)) return invalid("No player with that id.");
+      }
+      const existing = trades.find(
+        (trade) => trade.from === self && trade.operationId === p.operationId
+      );
+      if (existing) return ok(tradeWire(existing));
+      expireDue();
+      const open = trades.filter((trade) => trade.from === self && trade.status === "open");
+      if (open.length >= MAX_OPEN_TRADES) {
+        return failure(CODES.invalidParams, "Too many open trades. Cancel an open trade first.");
+      }
+      return ok(tradeWire(openTrade(self, p)));
+    }
+    function listTrades({ offerKey, wantKey, limit, cursor }) {
+      const size = limitOf(limit);
+      if (size === null) return invalid("Invalid limit.");
+      expireDue();
+      const self = selfId();
+      const visible = trades.filter(
+        (trade) => trade.status === "open" && trade.from !== self && (trade.to === null || trade.to === self) && !blocked.has(trade.from) && (offerKey === void 0 || offerKey === null || trade.offerKey === offerKey) && (wantKey === void 0 || wantKey === null || trade.wantKey === wantKey)
+      ).reverse();
+      const found = pageOf(visible, size, cursor);
+      if (!found) return invalid("Invalid cursor.");
+      return ok({ trades: found.page.map(tradeWire), nextCursor: found.nextCursor });
+    }
+    function pendingOf(trade, self) {
+      if (trade.status === "open" || trade.ackedBy.has(self)) return null;
+      if (trade.from === self) {
+        return {
+          ...tradeWire(trade),
+          role: "offerer",
+          action: trade.status === "matched" ? "receiveGive" : "returnOffer"
+        };
+      }
+      if (trade.taker === self) return { ...tradeWire(trade), role: "taker", action: "receiveOffer" };
+      return null;
+    }
+    function mine() {
+      expireDue();
+      const self = selfId();
+      const open = trades.filter((trade) => trade.from === self && trade.status === "open").reverse().map(tradeWire);
+      const pending = trades.map((trade) => pendingOf(trade, self)).filter((trade) => trade !== null).sort((a, b) => Date.parse(a.settledAt) - Date.parse(b.settledAt)).slice(0, PENDING_LIMIT);
+      return ok({ open, pending });
+    }
+    function settle(tradeId, give, taker) {
+      expireDue();
+      const trade = trades.find((entry) => entry.id === tradeId);
+      if (!trade || trade.from === taker || trade.to !== null && trade.to !== taker || blocked.has(trade.from)) {
+        return { outcome: "notFound" };
+      }
+      if (trade.status === "matched") {
+        return trade.taker === taker ? { outcome: "matched", trade } : { outcome: "taken" };
+      }
+      if (trade.status !== "open") return { outcome: trade.status };
+      trade.taker = taker;
+      trade.give = copy(give);
+      trade.status = "matched";
+      trade.settledAt = iso(now());
+      return { outcome: "matched", trade };
+    }
+    function accept({ tradeId, give }) {
+      if (typeof tradeId !== "string" || !tradeId) return invalid("Invalid tradeId.");
+      const error = payloadError(give, GIVE_MAX_BYTES, "Trade give");
+      if (error) return invalid(error);
+      const settled = settle(tradeId, give, selfId());
+      return ok(
+        settled.trade ? { outcome: settled.outcome, trade: tradeWire(settled.trade) } : { outcome: settled.outcome, trade: null }
+      );
+    }
+    function cancel({ tradeId }) {
+      expireDue();
+      const trade = trades.find((entry) => entry.id === tradeId && entry.from === selfId());
+      if (!trade) return invalid("No trade of yours for that id.");
+      if (trade.status === "open") {
+        trade.status = "cancelled";
+        trade.settledAt = iso(now());
+      }
+      return ok(tradeWire(trade));
+    }
+    function ack({ ids: rawIds }) {
+      const ids = idsOf(rawIds);
+      if (!ids) return invalid("ids must be 1 to 50 trade ids.");
+      expireDue();
+      const self = selfId();
+      let acked = 0;
+      for (const trade of trades) {
+        if (!ids.has(trade.id.toLowerCase()) || !pendingOf(trade, self)) continue;
+        trade.ackedBy.add(self);
+        acked += 1;
+      }
+      return ok(acked);
+    }
+    function reportTrade({ tradeId }) {
+      if (!config.signedIn) return failure(CODES.signInRequired, "Reporting requires sign-in.");
+      expireDue();
+      const self = selfId();
+      const trade = trades.find((entry) => entry.id === tradeId);
+      const listed = trade && trade.status === "open" && trade.from !== self && (trade.to === null || trade.to === self);
+      if (!trade || !(listed || trade.taker === self)) return invalid("No trade for that id.");
+      if (config.confirmTradeReport !== true) return ok(false);
+      blocked.add(trade.from);
+      return ok(true);
+    }
+    function seed() {
+      messages = [];
+      trades = [];
+      blocked.clear();
+      deliver(MOCK_RIVALS[0], "challenge", { stage: 3, score: 1200 });
+      openTrade(MOCK_RIVALS[0], {
+        offer: { item: "sword", count: 1 },
+        want: { item: "gem", count: 3 },
+        offerKey: "sword",
+        wantKey: "gem"
+      });
+      openTrade(MOCK_RIVALS[1], {
+        offer: { item: "shield", count: 1 },
+        want: { item: "coin", count: 100 },
+        offerKey: "shield",
+        wantKey: "coin"
+      });
+    }
+    seed();
+    const controls = {
+      receiveInbox(from, kind, payload) {
+        if (typeof from !== "string" || !from || from === selfId()) return false;
+        if (typeof kind !== "string" || !KEY.test(kind)) return false;
+        if (payloadError(payload, INBOX_MAX_BYTES, "Inbox payload")) return false;
+        if (blocked.has(from)) return false;
+        deliver(from, kind, payload);
+        return true;
+      },
+      offerTrade(from, offer, want, options = {}) {
+        const opts = options ?? {};
+        if (typeof from !== "string" || !from || from === selfId()) return null;
+        if (tradeOptionsError({ ...opts, offer, want })) return null;
+        const to = opts.toSelf === true ? selfId() : null;
+        return tradeWire(openTrade(from, { ...opts, offer, want, to, operationId: null }));
+      },
+      acceptTrade(tradeId, give, by = MOCK_RIVALS[0]) {
+        if (typeof by !== "string" || !by || by === selfId()) return "notFound";
+        if (payloadError(give, GIVE_MAX_BYTES, "Trade give")) return "notFound";
+        const trade = trades.find((entry) => entry.id === tradeId);
+        if (!trade || trade.from !== selfId()) return "notFound";
+        return settle(tradeId, give, by).outcome;
+      },
+      expireTrade(tradeId) {
+        const trade = trades.find((entry) => entry.id === tradeId && entry.status === "open");
+        if (!trade) return false;
+        trade.expiresAt = iso(now());
+        expireDue();
+        return true;
+      }
+    };
+    return {
+      controls,
+      reset: seed,
+      handlers: {
+        send,
+        list,
+        markRead,
+        removeMessages,
+        reportMessage,
+        create,
+        listTrades,
+        mine,
+        accept,
+        cancel,
+        ack,
+        reportTrade
+      }
+    };
+  }
+
   // src/backend-mock.js
   var MANIFEST_TIMEOUT_MS = 3e3;
   var MOCK_ANALYTICS_MAX_EVENTS = 200;
+  var MOCK_PROTOCOL_VERSION = 7;
   var STORAGE_KEY = "grush-sdk-mock";
   var SLOT_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
   var PLAYER_STATE_MAX_BYTES = 4 * 1024;
+  var SAMPLE_DEFAULT_COUNT = 10;
+  var SAMPLE_MAX_COUNT = 20;
+  var RATING_LIMIT = 1e9;
+  var RIVAL_RATINGS = [1e3, 1200, 1500];
   var CLOUD_SAVE_MAX_BYTES = 256 * 1024;
   var OPAQUE_STRING_MIN_LENGTH = 256;
   var LOCALE_FALLBACK = "ja";
@@ -735,6 +1144,8 @@
       avatarUrl: null,
       grantProfileConsent: true,
       confirmPlayerStateReport: true,
+      confirmInboxReport: true,
+      confirmTradeReport: true,
       unreliableDropRate: 0,
       maxPeers: 8,
       shareAvailable: true,
@@ -776,13 +1187,27 @@
     }
     return { ...result, value: structuredClone(result.value) };
   }
-  function invalid(message) {
+  function invalid2(message) {
     return failure(CODES.invalidParams, message);
   }
   function fallbackOf(value) {
     if (value === void 0 || value === null) return { ok: true, local: false };
     if (value === "local") return { ok: true, local: true };
     return { ok: false };
+  }
+  function isRating(value) {
+    return typeof value === "number" && Number.isFinite(value) && value > -RATING_LIMIT && value < RATING_LIMIT;
+  }
+  function shuffled(items) {
+    const copy2 = [...items];
+    for (let index = copy2.length - 1; index > 0; index -= 1) {
+      const other = Math.floor(Math.random() * (index + 1));
+      [copy2[index], copy2[other]] = [copy2[other], copy2[index]];
+    }
+    return copy2;
+  }
+  function stateWire({ hidden: _hidden, ...state }) {
+    return state;
   }
   function createMockBackend(config) {
     const otherStates = /* @__PURE__ */ new Map();
@@ -791,6 +1216,27 @@
     let analyticsEvents = [];
     const analyticsWarned = /* @__PURE__ */ new Set();
     let myState = null;
+    function putState(pseudoId, payload, options) {
+      otherStates.set(pseudoId, {
+        pseudoId,
+        payload,
+        revision: 1,
+        rating: isRating(options.rating) ? options.rating : null,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        hidden: options.hidden === true
+      });
+    }
+    function seedRivals() {
+      MOCK_RIVALS.forEach((pseudoId, index) => {
+        putState(pseudoId, { level: (index + 1) * 5 }, { rating: RIVAL_RATINGS[index] });
+      });
+    }
+    seedRivals();
+    const social = createMockSocial({
+      config,
+      selfId: () => localPseudoId(),
+      isKnownPlayer: (pseudoId) => otherStates.has(pseudoId)
+    });
     const consented = () => config.signedIn && readStored().consent === true;
     function playerWire() {
       return {
@@ -862,7 +1308,7 @@
       manifestGeneration += 1;
       manifestRead = Promise.resolve();
       const parsed = parseLeaderboardManifest(manifest);
-      if (!parsed.ok) return invalid(parsed.error);
+      if (!parsed.ok) return invalid2(parsed.error);
       return ok(leaderboards.load(parsed.leaderboards, false));
     }
     function requestProfile() {
@@ -875,13 +1321,18 @@
       writeStored({ consent: true });
       return ok(playerWire());
     }
-    function setMine({ payload, baseRevision }) {
+    function setMine(params) {
+      const { payload, baseRevision } = params;
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        return invalid("Player state payload must be a JSON object.");
+        return invalid2("Player state payload must be a JSON object.");
       }
-      if (jsonBytes(payload) > PLAYER_STATE_MAX_BYTES) return invalid("Player state is too large.");
+      if (jsonBytes(payload) > PLAYER_STATE_MAX_BYTES) return invalid2("Player state is too large.");
       if (containsOpaqueString(payload)) {
-        return invalid("Player state must not contain opaque encoded strings.");
+        return invalid2("Player state must not contain opaque encoded strings.");
+      }
+      const ratingGiven = "rating" in params && params.rating !== void 0;
+      if (ratingGiven && params.rating !== null && !isRating(params.rating)) {
+        return invalid2("Invalid rating.");
       }
       const current = myState ? myState.revision : 0;
       if (typeof baseRevision === "number" && baseRevision !== current) {
@@ -891,26 +1342,48 @@
         pseudoId: localPseudoId(),
         payload: structuredClone(payload),
         revision: current + 1,
+        rating: ratingGiven ? params.rating : myState?.rating ?? null,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       return ok(myState);
     }
     function getMany({ pseudoIds }) {
       if (!Array.isArray(pseudoIds) || pseudoIds.length === 0 || pseudoIds.length > 50) {
-        return invalid("pseudoIds must be an array of at most 50 ids.");
+        return invalid2("pseudoIds must be an array of at most 50 ids.");
       }
-      const states = pseudoIds.map((id) => otherStates.get(id)).filter((state) => state && !state.hidden).map(({ hidden: _hidden, ...state }) => state);
+      const states = pseudoIds.map((id) => otherStates.get(id)).filter((state) => state && !state.hidden).map(stateWire);
       return ok(states);
+    }
+    function sample({ count, minRating, maxRating }) {
+      let size = SAMPLE_DEFAULT_COUNT;
+      if (count !== void 0 && count !== null) {
+        if (!Number.isInteger(count) || count < 1 || count > SAMPLE_MAX_COUNT) {
+          return invalid2(`count must be an integer from 1 to ${SAMPLE_MAX_COUNT}.`);
+        }
+        size = count;
+      }
+      const minGiven = minRating !== void 0 && minRating !== null;
+      const maxGiven = maxRating !== void 0 && maxRating !== null;
+      if (minGiven !== maxGiven) return invalid2("minRating and maxRating must be given together.");
+      if (minGiven && (!isRating(minRating) || !isRating(maxRating))) {
+        return invalid2("Invalid rating range.");
+      }
+      if (minGiven && minRating > maxRating) return invalid2("minRating must not exceed maxRating.");
+      const self = localPseudoId();
+      const candidates = [...otherStates.values()].filter(
+        (state) => !state.hidden && state.pseudoId !== self && (!minGiven || state.rating !== null && state.rating >= minRating && state.rating <= maxRating)
+      );
+      return ok(shuffled(candidates).slice(0, size).map(stateWire));
     }
     function saveCloud({ payload, slot, baseRevision, fallback }) {
       const key = slot || "default";
-      if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+      if (!SLOT_PATTERN.test(key)) return invalid2("Invalid cloud save slot.");
       if (payload === void 0 || payload === null)
-        return invalid("Cloud save payload is required.");
+        return invalid2("Cloud save payload is required.");
       if (jsonBytes(payload) > CLOUD_SAVE_MAX_BYTES)
-        return invalid("Cloud save payload is too large.");
+        return invalid2("Cloud save payload is too large.");
       const mode = fallbackOf(fallback);
-      if (!mode.ok) return invalid("Invalid cloud save fallback.");
+      if (!mode.ok) return invalid2("Invalid cloud save fallback.");
       if (!config.signedIn) {
         if (!mode.local) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
         const now2 = (/* @__PURE__ */ new Date()).toISOString();
@@ -945,9 +1418,9 @@
     }
     function loadCloud({ slot, fallback }) {
       const key = slot || "default";
-      if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+      if (!SLOT_PATTERN.test(key)) return invalid2("Invalid cloud save slot.");
       const mode = fallbackOf(fallback);
-      if (!mode.ok) return invalid("Invalid cloud save fallback.");
+      if (!mode.ok) return invalid2("Invalid cloud save fallback.");
       if (!config.signedIn) {
         if (!mode.local) return failure(CODES.signInRequired, "Cloud save requires sign-in.");
         return ok(localSaves.get(key) ?? null);
@@ -958,9 +1431,9 @@
     }
     function removeCloud({ slot, fallback }) {
       const key = slot || "default";
-      if (!SLOT_PATTERN.test(key)) return invalid("Invalid cloud save slot.");
+      if (!SLOT_PATTERN.test(key)) return invalid2("Invalid cloud save slot.");
       const mode = fallbackOf(fallback);
-      if (!mode.ok) return invalid("Invalid cloud save fallback.");
+      if (!mode.ok) return invalid2("Invalid cloud save fallback.");
       if (!config.signedIn && !mode.local) {
         return failure(CODES.signInRequired, "Cloud save requires sign-in.");
       }
@@ -985,7 +1458,7 @@
       return true;
     }
     function fromBoard(outcome, pick) {
-      return outcome.error ? invalid(outcome.error) : ok(pick(outcome));
+      return outcome.error ? invalid2(outcome.error) : ok(pick(outcome));
     }
     const handlers = {
       "player.getSelf": () => ok(playerWire()),
@@ -1005,9 +1478,22 @@
       "playerState.report": (p) => {
         if (!config.signedIn) return failure(CODES.signInRequired, "Reporting requires sign-in.");
         const target = otherStates.get(p.pseudoId);
-        if (!target || target.hidden) return invalid("No player state for that id.");
+        if (!target || target.hidden) return invalid2("No player state for that id.");
         return ok(config.confirmPlayerStateReport === true);
       },
+      "playerState.sample": sample,
+      "inbox.send": social.handlers.send,
+      "inbox.list": social.handlers.list,
+      "inbox.markRead": social.handlers.markRead,
+      "inbox.remove": social.handlers.removeMessages,
+      "inbox.report": social.handlers.reportMessage,
+      "trade.create": social.handlers.create,
+      "trade.list": social.handlers.listTrades,
+      "trade.mine": social.handlers.mine,
+      "trade.accept": social.handlers.accept,
+      "trade.cancel": social.handlers.cancel,
+      "trade.ack": social.handlers.ack,
+      "trade.report": social.handlers.reportTrade,
       "cloudSave.load": loadCloud,
       "cloudSave.save": saveCloud,
       "cloudSave.remove": removeCloud,
@@ -1028,15 +1514,12 @@
       defineLeaderboard: (key, options) => leaderboards.define(key, options),
       loadLeaderboards,
       addRival: (key, displayName, value, options) => leaderboards.addRival(key, displayName, value, options),
-      definePlayerState(pseudoId, payload, options = {}) {
-        otherStates.set(pseudoId, {
-          pseudoId,
-          payload: structuredClone(payload),
-          revision: 1,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          hidden: options.hidden === true
-        });
-      },
+      definePlayerState: (pseudoId, payload, options) => putState(pseudoId, structuredClone(payload), options ?? {}),
+      rivals: MOCK_RIVALS,
+      receiveInbox: social.controls.receiveInbox,
+      offerTrade: social.controls.offerTrade,
+      acceptTrade: social.controls.acceptTrade,
+      expireTrade: social.controls.expireTrade,
       addPeer: (displayName, avatarUrl) => net.addPeer(displayName, avatarUrl),
       removePeer: (peer) => net.removePeer(peer),
       analyticsEvents: () => structuredClone(analyticsEvents),
@@ -1045,6 +1528,8 @@
         manifestGeneration += 1;
         manifestRead = null;
         otherStates.clear();
+        seedRivals();
+        social.reset();
         cloudSaves.clear();
         localSaves.clear();
         analyticsEvents = [];
@@ -1059,7 +1544,7 @@
       kind: "mock",
       controls,
       isAvailable: () => true,
-      protocolVersion: () => 6,
+      protocolVersion: () => MOCK_PROTOCOL_VERSION,
       localeCurrent: () => mockLocale(config),
       localeOnChange: () => () => {
       },
@@ -1073,7 +1558,7 @@
         try {
           return snapshot(handler(params ?? {}));
         } catch (error) {
-          return invalid(error instanceof Error ? error.message : "The mock rejected the call.");
+          return invalid2(error instanceof Error ? error.message : "The mock rejected the call.");
         }
       }
     };
@@ -1116,9 +1601,23 @@
     "leaderboard.aroundMe": (apis, p) => apis.Leaderboards?.aroundMe(p.key, p),
     "leaderboard.friends": (apis, p) => apis.Leaderboards?.friends(p.key, p),
     "playerState.getMine": (apis) => apis.PlayerState?.getMine(),
-    "playerState.setMine": (apis, p) => apis.PlayerState?.setMine(p.payload, p.baseRevision),
+    // `rating` is in the params only when the runtime is new enough to read it (see sdk.js).
+    "playerState.setMine": (apis, p) => "rating" in p ? apis.PlayerState?.setMine(p.payload, p.baseRevision, { rating: p.rating }) : apis.PlayerState?.setMine(p.payload, p.baseRevision),
     "playerState.get": (apis, p) => apis.PlayerState?.get(p.pseudoIds),
     "playerState.report": (apis, p) => apis.PlayerState?.report(p.pseudoId),
+    "playerState.sample": (apis, p) => apis.PlayerState?.sample?.(p),
+    "inbox.send": (apis, p) => apis.Inbox?.send?.(p.to, p.kind, p.payload),
+    "inbox.list": (apis, p) => apis.Inbox?.list?.(p),
+    "inbox.markRead": (apis, p) => apis.Inbox?.markRead?.(p.ids),
+    "inbox.remove": (apis, p) => apis.Inbox?.remove?.(p.ids),
+    "inbox.report": (apis, p) => apis.Inbox?.report?.(p.messageId),
+    "trade.create": (apis, p) => apis.Trade?.create?.(p),
+    "trade.list": (apis, p) => apis.Trade?.list?.(p),
+    "trade.mine": (apis) => apis.Trade?.mine?.(),
+    "trade.accept": (apis, p) => apis.Trade?.accept?.(p.tradeId, p.give),
+    "trade.cancel": (apis, p) => apis.Trade?.cancel?.(p.tradeId),
+    "trade.ack": (apis, p) => apis.Trade?.ack?.(p.ids),
+    "trade.report": (apis, p) => apis.Trade?.report?.(p.tradeId),
     "share.open": (apis, p) => apis.Share?.share(p),
     "share.getAvailability": (apis) => apis.Share?.isAvailable(),
     "locale.get": (apis) => apis.Locale?.get(),
@@ -1145,7 +1644,9 @@
       PlayerState: runtimeApi("PlayerState"),
       Net: runtimeApi("Net"),
       Share: runtimeApi("Share"),
-      Locale: runtimeApi("Locale")
+      Locale: runtimeApi("Locale"),
+      Inbox: runtimeApi("Inbox"),
+      Trade: runtimeApi("Trade")
     };
   }
   async function callCloudSave(method, params) {
@@ -1273,8 +1774,85 @@
       pseudoId: text(raw.pseudoId),
       payload: raw.payload ?? {},
       revision: number(raw.revision),
+      rating: typeof raw.rating === "number" ? raw.rating : null,
       updatedAt: text(raw.updatedAt)
     };
+  }
+  function unwrap(raw, key) {
+    return raw && typeof raw === "object" && !Array.isArray(raw) && key in raw ? raw[key] : raw;
+  }
+  function countOf(raw, key) {
+    const value = unwrap(raw, key);
+    return typeof value === "number" ? value : void 0;
+  }
+  function flagOf(raw, key) {
+    return unwrap(raw, key) === true;
+  }
+  function payloadOf(raw) {
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  }
+  function inboxMessageOf(raw) {
+    if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !raw.id) return null;
+    return {
+      id: raw.id,
+      from: text(raw.from),
+      kind: text(raw.kind),
+      payload: payloadOf(raw.payload),
+      createdAt: text(raw.createdAt),
+      readAt: nullableText(raw.readAt)
+    };
+  }
+  function inboxPageOf(raw) {
+    if (!raw || typeof raw !== "object" || !Array.isArray(raw.messages)) return null;
+    return {
+      messages: raw.messages.map(inboxMessageOf).filter((message) => message !== null),
+      unreadCount: number(raw.unreadCount),
+      nextCursor: nullableText(raw.nextCursor)
+    };
+  }
+  var TRADE_OUTCOMES = /* @__PURE__ */ new Set(["matched", "taken", "expired", "cancelled", "notFound"]);
+  function tradeOf(raw) {
+    if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !raw.id) return null;
+    return {
+      id: raw.id,
+      from: nullableText(raw.from),
+      to: nullableText(raw.to),
+      taker: nullableText(raw.taker),
+      offer: payloadOf(raw.offer),
+      want: payloadOf(raw.want),
+      offerKey: nullableText(raw.offerKey),
+      wantKey: nullableText(raw.wantKey),
+      give: raw.give && typeof raw.give === "object" && !Array.isArray(raw.give) ? raw.give : null,
+      // A status this SDK does not know yet is passed through as is, so a newer GameRush still reads.
+      status: text(raw.status),
+      createdAt: text(raw.createdAt),
+      expiresAt: text(raw.expiresAt),
+      settledAt: nullableText(raw.settledAt)
+    };
+  }
+  function pendingTradeOf(raw) {
+    const trade = tradeOf(raw);
+    if (!trade) return null;
+    return { ...trade, role: text(raw.role), action: text(raw.action) };
+  }
+  function tradePageOf(raw) {
+    if (!raw || typeof raw !== "object" || !Array.isArray(raw.trades)) return null;
+    return {
+      trades: raw.trades.map(tradeOf).filter((trade) => trade !== null),
+      nextCursor: nullableText(raw.nextCursor)
+    };
+  }
+  function myTradesOf(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    if (!Array.isArray(raw.open) || !Array.isArray(raw.pending)) return null;
+    return {
+      open: raw.open.map(tradeOf).filter((trade) => trade !== null),
+      pending: raw.pending.map(pendingTradeOf).filter((trade) => trade !== null)
+    };
+  }
+  function acceptResultOf(raw) {
+    if (!raw || typeof raw !== "object" || !TRADE_OUTCOMES.has(raw.outcome)) return null;
+    return { outcome: raw.outcome, trade: tradeOf(raw.trade) };
   }
   function cloudSaveOf(raw) {
     if (!raw || typeof raw !== "object") return null;
@@ -1461,13 +2039,16 @@
   }
 
   // src/sdk.js
-  var VERSION = "0.6.0";
+  var VERSION = "0.7.0";
   var REQUIRED_PROTOCOL_VERSION = 1;
   var PLAYER_STATE_PROTOCOL_VERSION = 2;
   var SHARE_PROTOCOL_VERSION = 3;
   var LOCALE_PROTOCOL_VERSION = 4;
   var CLOUD_SAVE_LOCAL_PROTOCOL_VERSION = 5;
   var ANALYTICS_PROTOCOL_VERSION = 6;
+  var MATCHMAKING_PROTOCOL_VERSION = 7;
+  var INBOX_PROTOCOL_VERSION = 7;
+  var TRADE_PROTOCOL_VERSION = 7;
   var BACKENDS = /* @__PURE__ */ new Set(["auto", "web", "mock", "none"]);
   var LOCAL_HOSTNAMES = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
   var noneBackend = {
@@ -1538,15 +2119,101 @@
       aroundMe: (key, opts) => mapped("leaderboard.aroundMe", pageParams(key, opts, ["range"]), required(leaderboardPageOf)),
       friends: (key, opts) => mapped("leaderboard.friends", pageParams(key, opts, ["limit"]), required(leaderboardPageOf))
     };
+    const definedOf = (source, names) => {
+      const params = {};
+      for (const name of names) {
+        if (source?.[name] !== void 0) params[name] = source[name];
+      }
+      return params;
+    };
+    const listIn = (key, normalize) => (raw) => {
+      const list = unwrap(raw, key);
+      return Array.isArray(list) ? list.map(normalize).filter((item) => item !== null) : void 0;
+    };
+    const tradeIn = (raw) => tradeOf(unwrap(raw, "trade")) ?? void 0;
+    const optionsError = (options2, label) => options2 !== void 0 && options2 !== null && typeof options2 !== "object" ? Promise.resolve(failure(CODES.invalidParams, `${label} options must be an object.`)) : null;
     const playerState = {
       getMine: () => statesCall("playerState.getMine", void 0, orNull(playerStateOf)),
-      setMine(payload, baseRevision) {
+      setMine(payload, baseRevision, rawExtra) {
         const params = { payload };
         if (typeof baseRevision === "number") params.baseRevision = baseRevision;
+        if (rawExtra?.rating !== void 0 && backend().protocolVersion() >= MATCHMAKING_PROTOCOL_VERSION) {
+          params.rating = rawExtra.rating;
+        }
         return statesCall("playerState.setMine", params, required(playerStateOf));
       },
       get: (pseudoIds) => statesCall("playerState.get", { pseudoIds }, listOf(playerStateOf)),
-      report: (pseudoId) => statesCall("playerState.report", { pseudoId }, (raw) => raw === true)
+      report: (pseudoId) => statesCall("playerState.report", { pseudoId }, (raw) => raw === true),
+      sample(options2) {
+        const error = optionsError(options2, "Sample");
+        if (error) return error;
+        return mapped(
+          "playerState.sample",
+          definedOf(options2, ["count", "minRating", "maxRating"]),
+          listIn("states", playerStateOf),
+          MATCHMAKING_PROTOCOL_VERSION
+        );
+      }
+    };
+    const inbox = {
+      send: (to, kind, payload) => mapped(
+        "inbox.send",
+        { to, kind, payload },
+        (raw) => flagOf(raw, "sent"),
+        INBOX_PROTOCOL_VERSION
+      ),
+      list(options2) {
+        const error = optionsError(options2, "Inbox list");
+        if (error) return error;
+        return mapped(
+          "inbox.list",
+          definedOf(options2, ["unreadOnly", "limit", "cursor"]),
+          required(inboxPageOf),
+          INBOX_PROTOCOL_VERSION
+        );
+      },
+      markRead: (ids) => mapped("inbox.markRead", { ids }, (raw) => countOf(raw, "updated"), INBOX_PROTOCOL_VERSION),
+      remove: (ids) => mapped("inbox.remove", { ids }, (raw) => countOf(raw, "updated"), INBOX_PROTOCOL_VERSION),
+      report: (messageId) => mapped(
+        "inbox.report",
+        { messageId },
+        (raw) => flagOf(raw, "reported"),
+        INBOX_PROTOCOL_VERSION
+      )
+    };
+    const trade = {
+      create(options2) {
+        if (!options2 || typeof options2 !== "object") {
+          return Promise.resolve(
+            failure(CODES.invalidParams, "Trade options must be an object like { offer, want }.")
+          );
+        }
+        const params = definedOf(options2, [
+          "offer",
+          "want",
+          "offerKey",
+          "wantKey",
+          "to",
+          "expiresInSec",
+          "operationId"
+        ]);
+        return mapped("trade.create", params, tradeIn, TRADE_PROTOCOL_VERSION);
+      },
+      list(options2) {
+        const error = optionsError(options2, "Trade list");
+        if (error) return error;
+        return mapped(
+          "trade.list",
+          definedOf(options2, ["offerKey", "wantKey", "limit", "cursor"]),
+          required(tradePageOf),
+          TRADE_PROTOCOL_VERSION
+        );
+      },
+      mine: () => mapped("trade.mine", void 0, required(myTradesOf), TRADE_PROTOCOL_VERSION),
+      accept: (tradeId, give) => mapped("trade.accept", { tradeId, give }, required(acceptResultOf), TRADE_PROTOCOL_VERSION),
+      cancel: (tradeId) => mapped("trade.cancel", { tradeId }, tradeIn, TRADE_PROTOCOL_VERSION),
+      ack: (ids) => mapped("trade.ack", { ids }, (raw) => countOf(raw, "acked"), TRADE_PROTOCOL_VERSION),
+      report: (tradeId) => mapped("trade.report", { tradeId }, (raw) => flagOf(raw, "reported"), TRADE_PROTOCOL_VERSION)
     };
     function withFallback(params, extra) {
       if (extra?.fallback !== void 0 && backend().protocolVersion() >= CLOUD_SAVE_LOCAL_PROTOCOL_VERSION) {
@@ -1702,6 +2369,8 @@
       player,
       leaderboards,
       playerState,
+      inbox,
+      trade,
       cloudSave,
       share,
       locale,
